@@ -31,7 +31,8 @@ def test_speech_and_voice_prices():
     assert prices.tts("elevenlabs", "eleven_flash_v2_5") == 40.0  # per 1M characters, either spelling
     assert prices.tts("11labs", "eleven_multilingual_v2") == 80.0
     assert prices.tts("kokoro", None) == 0.0
-    assert prices.tts("inworld", "inworld-tts-2") == 25.0 and prices.tts("rime-ai", "coda") is None
+    assert prices.tts("inworld", "inworld-tts-2") == 25.0
+    assert prices.tts("rime-ai", "coda") == 50.0
 
 
 def test_your_own_prices_override_the_list(tmp_path):
@@ -101,3 +102,17 @@ def test_the_overview_adds_up_what_calls_cost():
     ]
     cost = summarize(calls)["cost"]
     assert cost == {"calls": 2, "total": 0.06, "perMinute": 0.02, "perCall": 0.03, "incomplete": 1}
+
+
+def test_missing_provider_prices():
+    assert prices.stt("gladia", None) == 0.0125
+    assert prices.tts("rime-ai", "coda") == 50.0
+    assert prices.tts("rime-ai", "mistv2") == 30.0
+    assert prices.tts("smallest-ai", "lightning_v3.1_pro") == 19.5
+    assert prices.tts("neuphonic", None) is None
+
+
+def test_model_specific_price_beats_wildcard():
+    assert prices.stt("deepgram", "nova-3", "multi") == 0.0092
+    assert prices.tts("11labs", "eleven_multilingual_v2") == 80.0
+    assert prices.tts("11labs", "eleven_v3") == 80.0

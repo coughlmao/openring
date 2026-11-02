@@ -28,6 +28,7 @@ STT: dict[str, dict[str, float]] = {
     "11labs": {"*": 0.0065},  # Scribe v2 Realtime, $0.39/h: elevenlabs.io/pricing/api
     "cartesia": {"*": 0.0071},  # Ink: 3 credits/s on the Startup plan ($49 for 1.25M credits): cartesia.ai/pricing
     "whisper": {"*": 0.0},  # runs on this computer
+    "gladia": {"*": 0.0125},  # gladia.io/pricing (real-time: $0.75/hour)
 }
 # Per million characters the voice reads.
 TTS: dict[str, dict[str, float]] = {
@@ -37,6 +38,8 @@ TTS: dict[str, dict[str, float]] = {
     "cartesia": {"*": 39.2},  # Sonic: 1 credit per character on the Startup plan: cartesia.ai/pricing
     "inworld": {"inworld-tts-2": 25.0, "inworld-tts-2-flash": 15.0},  # on demand: inworld.ai/pricing
     "kokoro": {"*": 0.0},  # runs on this computer
+    "rime-ai": {"coda": 50.0, "mistv2": 30.0},  # rime.ai/pricing
+    "smallest-ai": {"lightning_v3.1": 17.5, "lightning_v3.1_pro": 19.5},  # smallest.ai/pricing/models
 }
 FREE_LLMS = {"ollama"}  # runs on this computer (OmniRoute may route to paid providers, so it isn't here)
 # How a route's "cheapest" order weighs input against output: a voice call sends its whole conversation on
@@ -62,7 +65,15 @@ def _tables() -> dict[str, dict[str, dict[str, Any]]]:
     for kind, table in tables.items():
         for provider, models in (user.get(kind) or {}).items() if isinstance(user, dict) else ():
             if isinstance(models, dict):
-                table.setdefault(provider, {}).update(models)
+                shipped = table.get(provider, {})
+                merged = {**shipped, **models}
+                if "*" in models:
+                    for key in shipped:
+                        if key not in models:
+                            merged[key] = models["*"]
+
+                table[provider] = merged
+
     return tables
 
 
