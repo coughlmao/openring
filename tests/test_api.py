@@ -356,3 +356,75 @@ def test_words_to_recognize_are_kept_and_bad_ones_refused():
     bad = {**ASSISTANT, "transcriber": {"provider": "deepgram", "keywords": ["two words"]}}
     r = client.post("/assistant", json=bad, headers=AUTH)
     assert r.status_code == 400 and "keywords" in r.json()["detail"]
+
+
+def test_list_date_filters():
+    store = Store(":memory:")
+    client = TestClient(create_app(
+        Settings(
+            api_key="test-key",
+            public_url="https://ring.example.com",
+            db_path=":memory:",
+        ),
+        store,
+    ))
+
+    from datetime import datetime, timezone
+    import openring.store as store_module
+
+    timestamps = iter([
+        "2026-01-01T10:00:00Z",
+        "2026-02-01T10:00:00Z",
+        "2026-03-01T10:00:00Z",
+    ])
+
+    monkeypatch_now = lambda: next(timestamps)
+    original_now = store_module.now_iso
+    store_module.now_iso = monkeypatch_now
+
+    try:
+        for name in ("First", "Second", "Third"):
+            store.create("calls", {"name": name})
+    finally:
+        store_module.now_iso = original_now
+
+    # Greater than
+    response = client.get(
+        "/call?createdAtGt=2026-01-15T00:00:00Z",
+        headers=AUTH,
+    )
+    assert response.status_code == 200
+    assert {call["name"] for call in response.json()} == {"Second", "Third"}
+
+    # Less than
+    response = client.get(
+        "/call?createdAtLt=2026-02-15T00:00:00Z",
+        headers=AUTH,
+    )
+    assert {call["name"] for call in response.json()} == {"First", "Second"}
+
+    # Greater than or equal
+    response = client.get(
+        "/call?createdAtGe=2026-02-01T10:00:00Z",
+        headers=AUTH,
+    )
+    assert {call["name"] for call in response.json()} == {"Second", "Third"}
+
+    # Less than or equal
+    response = client.get(
+        "/call?createdAtLe=2026-02-01T10:00:00Z",
+        headers=AUTH,
+    )
+    assert {call["name"] for call in response.json()} == {"First", "Second"}
+
+    # Combined filters
+    response = client.get(
+        "/call?createdAtGe=2026-01-15T00:00:00Z"
+        "&createdAtLe=2026-02-15T00:00:00Z",
+        headers=AUTH,
+    )
+    assert {call["name"] for call in response.json()} == {"Second"}
+
+    # No filters should return all records
+    response = client.get("/call", headers=AUTH)
+    assert len(response.json()) == 3

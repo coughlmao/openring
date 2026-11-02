@@ -144,11 +144,41 @@ class Store:
             ).fetchone()
         return json.loads(row[0]) if row else None
 
-    def list(self, collection: str, limit: int = 100) -> list[dict[str, Any]]:
+    def list(
+             self,
+             collection: str,
+             limit: int = 100,
+             created_at_gt:str | None = None,
+             created_at_lt:str | None = None,
+             created_at_ge:str | None = None,
+             created_at_le:str | None = None,
+             ) -> list[dict[str, Any]]:
         self._check(collection)
+
+        conditions = []
+        params:list[Any] = []
+
+        if created_at_gt is not None:
+            conditions.append("created_at > ?")
+            params.append(created_at_gt)
+
+        if created_at_lt is not None:
+            conditions.append("created_at < ?")
+            params.append(created_at_lt)
+
+        if created_at_ge is not None:
+            conditions.append("created_at >= ?")
+            params.append(created_at_ge)
+
+        if created_at_le is not None:
+            conditions.append("created_at <= ?")
+            params.append(created_at_le)
+
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
         with self._lock:
             rows = self._db.execute(
-                f"SELECT doc FROM {collection} ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,)
+                f"SELECT doc FROM {collection} {where} ORDER BY created_at DESC, rowid DESC LIMIT ?", (*params,limit,)
             ).fetchall()
         return [json.loads(r[0]) for r in rows]
 

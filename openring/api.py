@@ -444,8 +444,21 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         return store.create("assistants", body)
 
     @app.get("/assistant", dependencies=auth_deps)
-    def list_assistants(limit: int = 100) -> list[dict[str, Any]]:
-        return store.list("assistants", limit)
+    def list_assistants(
+        limit: int = 100,
+        createdAtGt: str | None = None,
+        createdAtLt: str | None = None,
+        createdAtGe: str | None = None,
+        createdAtLe: str | None = None,
+        ) -> list[dict[str, Any]]:
+        return store.list(
+            "assistants",
+            limit,
+            created_at_gt=createdAtGt,
+            created_at_lt=createdAtLt,
+            created_at_ge=createdAtGe,
+            created_at_le=createdAtLe,
+            )
 
     @app.get("/assistant/{assistant_id}", dependencies=auth_deps)
     def get_assistant(assistant_id: str) -> dict[str, Any]:
@@ -570,8 +583,21 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         return store.create("tools", body)
 
     @app.get("/tool", dependencies=auth_deps)
-    def list_tools(limit: int = 100) -> list[dict[str, Any]]:
-        return store.list("tools", limit)
+    def list_tools(
+        limit: int = 100,
+        createdAtGt:str | None = None,
+        createdAtLt:str | None = None,
+        createdAtGe:str | None = None,
+        createdAtLe:str | None = None,
+) -> list[dict[str, Any]]:
+        return store.list(
+            "tools",
+            limit,
+            created_at_gt=createdAtGt,
+            created_at_lt=createdAtLt,
+            created_at_ge=createdAtGe,
+            created_at_le=createdAtLe,
+            )
 
     @app.get("/tool/{tool_id}", dependencies=auth_deps)
     def get_tool(tool_id: str) -> dict[str, Any]:
@@ -746,8 +772,21 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         return store.create("phone_numbers", body)
 
     @app.get("/phone-number", dependencies=auth_deps)
-    def list_phone_numbers(limit: int = 100) -> list[dict[str, Any]]:
-        return store.list("phone_numbers", limit)
+    def list_phone_numbers(
+        limit: int = 100,
+        createdAtGt: str | None = None,
+        createdAtLt: str | None = None,
+        createdAtGe: str | None = None,
+        createdAtLe: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return store.list(
+        "phone_numbers",
+        limit,
+        created_at_gt=createdAtGt,
+        created_at_lt=createdAtLt,
+        created_at_ge=createdAtGe,
+        created_at_le=createdAtLe,
+    )
 
     @app.get("/phone-number/{number_id}", dependencies=auth_deps)
     def get_phone_number(number_id: str) -> dict[str, Any]:
@@ -771,8 +810,21 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
 
     # ---- Calls ------------------------------------------------------------------
     @app.get("/call", dependencies=auth_deps)
-    def list_calls(limit: int = 100) -> list[dict[str, Any]]:
-        return store.list("calls", limit)
+    def list_calls(
+        limit: int = 100,
+        createdAtGt:str | None = None,
+        createdAtLt:str | None = None,
+        createdAtGe:str | None = None,
+        createdAtLe:str | None = None,
+        ) -> list[dict[str, Any]]:
+        return store.list(
+            "calls",
+            limit,
+            created_at_gt=createdAtGt,
+            created_at_lt=createdAtLt,
+            created_at_ge=createdAtGe,
+            created_at_le=createdAtLe,
+            )
 
     def _finished_recording(call_id: str) -> tuple[dict[str, Any], Path]:
         call = _get_or_404("calls", call_id)
