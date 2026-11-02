@@ -139,6 +139,8 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="openring", description="Self-hosted voice AI agents, Vapi-compatible.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--port", type=int, help="port to serve on (default: $PORT, or 8000)")
+    parser.add_argument("--host", help="host to bind (default: $HOST, or 127.0.0.1); anything other than "
+                        "localhost exposes the dashboard, so set OPENRING_PASSWORD")
     parser.add_argument("--reset-password", action="store_true",
                         help="forget the dashboard password; choose a new one at http://localhost on the next visit")
     args = parser.parse_args(argv)
@@ -156,7 +158,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.reset_password:
         reset_password(os.environ["OPENRING_DB_PATH"])
         return
-    host = os.environ.get("HOST", "127.0.0.1")
+    host = args.host if args.host is not None else os.environ.get("HOST", "127.0.0.1")
     port = args.port or int(os.environ.get("PORT", "8000"))
     ensure_port_free(host, port)
 

@@ -122,3 +122,38 @@ def test_startup_lines_reach_a_pipe_while_the_server_runs(tmp_path):
         proc.kill()
     assert any("OpenRing is running" in line for line in lines), lines
     assert any("example value anyone can guess" in line for line in lines)
+
+
+@pytest.mark.parametrize(("arguments", "environment", "expected"), [
+    ([], None, "127.0.0.1"),
+    ([], "192.0.2.10", "192.0.2.10"),
+    (["--host", "192.0.2.20"], None, "192.0.2.20"),
+    (["--host", "localhost"], "192.0.2.10", "localhost"),
+])
+def test_host_selection(home, monkeypatch, arguments, environment, expected):
+    if environment is None:
+        monkeypatch.delenv("HOST", raising=False)
+    else:
+        monkeypatch.setenv("HOST", environment)
+    monkeypatch.setattr(home, "load_settings", lambda: (False, False))
+    checked = []
+
+    def check_port(host, port):
+        checked.append((host, port))
+        raise SystemExit(0)
+
+    monkeypatch.setattr(home, "ensure_port_free", check_port)
+    with pytest.raises(SystemExit) as stopped:
+        home.main(arguments + ["--port", "8123"])
+    assert stopped.value.code == 0
+    assert checked == [(expected, 8123)]
+
+
+def test_host_help_mentions_dashboard_exposure_and_password(home, capsys):
+    with pytest.raises(SystemExit) as stopped:
+        home.main(["--help"])
+    assert stopped.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--host" in help_text
+    assert "exposes the dashboard" in help_text
+    assert "OPENRING_PASSWORD" in help_text
