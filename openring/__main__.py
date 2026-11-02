@@ -7,6 +7,7 @@ import socket
 import sys
 from pathlib import Path
 
+from . import __version__
 from .config import is_placeholder_key
 
 HOME = Path(os.environ.get("OPENRING_HOME", Path.home() / ".openring"))
@@ -136,6 +137,7 @@ def load_settings() -> tuple[bool, bool]:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="openring", description="Self-hosted voice AI agents, Vapi-compatible.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--port", type=int, help="port to serve on (default: $PORT, or 8000)")
     parser.add_argument("--reset-password", action="store_true",
                         help="forget the dashboard password; choose a new one at http://localhost on the next visit")

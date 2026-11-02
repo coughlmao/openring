@@ -2,9 +2,18 @@ import socket
 
 import pytest
 
-from openring.__main__ import ensure_port_free, port_in_use, reset_password
+from openring import __version__
+from openring.__main__ import ensure_port_free, main, port_in_use, reset_password
 from openring.auth import Sessions
 from openring.store import Store
+
+
+def test_version_prints_version_and_exits(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.strip() == f"openring {__version__}"
 
 
 def test_busy_port_is_reported_with_a_way_out(capsys):
