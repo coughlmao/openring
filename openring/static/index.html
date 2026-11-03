@@ -1583,6 +1583,23 @@ const ABOUT = {
   "telephony:genesys": "Contact center calls, through Audio Connector",
 };
 const cardKey = p => `${p.kind}:${p.id}`;
+const disconnectConfirmations = new WeakMap();
+function confirmDisconnect(button) {
+  const pending = disconnectConfirmations.get(button);
+  if (pending) {
+    clearTimeout(pending.timer);
+    disconnectConfirmations.delete(button);
+    button.textContent = "Disconnect";
+    if (Date.now() < pending.until) return true;
+  }
+  button.textContent = "Confirm disconnect";
+  const timer = setTimeout(() => {
+    disconnectConfirmations.delete(button);
+    button.textContent = "Disconnect";
+  }, 4000);
+  disconnectConfirmations.set(button, { until: Date.now() + 4000, timer });
+  return false;
+}
 async function viewProviders() {
   setPage("providers");
   const info = await api("/dashboard/info");
@@ -1630,12 +1647,14 @@ async function viewProviders() {
         status(p, r.checked ? "Works." : `${p.name} can't be checked in advance; your first call will tell.`);
       } catch (err) { status(p, sentence(err.message), true); }
     },
-    async disconnect(p) {
+    async disconnect(p, button) {
+      if (!confirmDisconnect(button)) return;
+      button.disabled = true;
       try { await api(`/providers/${p.id}/connect`, { method: "DELETE" }); viewProviders(); }
-      catch (err) { status(p, sentence(err.message), true); }
+      catch (err) { button.disabled = false; status(p, sentence(err.message), true); }
     },
   };
-  v.querySelectorAll("[data-action]").forEach(b => b.onclick = () => run[b.dataset.action](byCard(b.dataset.card)));
+  v.querySelectorAll("[data-action]").forEach(b => b.onclick = () => run[b.dataset.action](byCard(b.dataset.card), b));
   // Whether the local Ollama is up, and what it has pulled.
   const ollamaCard = info.providers.find(p => p.id === "ollama");
   if (ollamaCard && v.querySelector(`[data-status="${cardKey(ollamaCard)}"]`)) api("/providers/ollama/models").then(r => status(ollamaCard,

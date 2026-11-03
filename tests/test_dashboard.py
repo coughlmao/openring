@@ -75,3 +75,62 @@ def test_dates_use_the_interface_language():
     # The page is in English; dates in the browser's language read "30 de out." among English words.
     assert not re.search(r"toLocale(Date|Time)?String\(\s*(\[\]|undefined)?\s*[,)]", PAGE)
     assert 'const LOCALE = "en-US"' in PAGE
+
+
+def test_provider_disconnect_requires_a_second_click_before_expiry():
+    helper_start = PAGE.find("const disconnectConfirmations")
+    helper = PAGE[helper_start:PAGE.index("async function viewProviders")] if helper_start >= 0 else ""
+    handlers = PAGE[PAGE.index("  const run = {", PAGE.index("async function viewProviders")):
+                    PAGE.index('  v.querySelectorAll("[data-action]")', PAGE.index("async function viewProviders"))]
+    got = run_js("""
+    const assert = require('node:assert/strict');
+    let now = 0, nextTimer = 0, requests = 0, refreshed = 0, failed = false;
+    const timers = new Map();
+    Date.now = () => now;
+    const setTimeout = (fn) => { timers.set(++nextTimer, fn); return nextTimer; };
+    const clearTimeout = id => timers.delete(id);
+    const api = async () => { requests++; if (failed) throw Error('test failure'); };
+    const viewProviders = () => { refreshed++; };
+    let error;
+    const status = (p, text) => { error = text; };
+    const sentence = text => text;
+    """ + helper + handlers + """
+    (async () => {
+      const p = {id: 'fake-provider'};
+      const first = {textContent: 'Disconnect'}, other = {textContent: 'Disconnect'};
+      await run.disconnect(p, first);
+      assert.equal(requests, 0);
+      assert.equal(first.textContent, 'Confirm disconnect');
+      assert.equal(first.disabled, undefined);
+      // Arming one card must not confirm another card.
+      await run.disconnect(p, other);
+      assert.equal(requests, 0);
+      now = 1000;
+      await run.disconnect(p, first);
+      assert.equal(requests, 1);
+      assert.equal(refreshed, 1);
+      assert.equal(first.disabled, true);
+      assert.equal(timers.size, 1); // The confirmed button's timer was cleared.
+      // A late click must re-arm, even if the browser delayed the timeout callback.
+      now = 4000;
+      await run.disconnect(p, other);
+      assert.equal(requests, 1);
+      assert.equal(other.textContent, 'Confirm disconnect');
+      for (const fn of timers.values()) fn();
+      assert.equal(other.textContent, 'Disconnect');
+      // After expiry a fresh click only asks for confirmation.
+      await run.disconnect(p, other);
+      assert.equal(requests, 1);
+      failed = true;
+      await run.disconnect(p, other);
+      assert.equal(requests, 2);
+      assert.equal(other.disabled, false);
+      assert.equal(other.textContent, 'Disconnect');
+      assert.equal(error, 'test failure');
+      await run.disconnect(p, other);
+      assert.equal(requests, 2); // A failed request also needs fresh confirmation.
+      console.log(JSON.stringify({ok: true}));
+    })().catch(err => { console.error(err); process.exitCode = 1; });
+    """)
+    assert got == {"ok": True}
+    assert 'run[b.dataset.action](byCard(b.dataset.card), b)' in PAGE
