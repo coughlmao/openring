@@ -673,7 +673,13 @@ Small pull requests get merged fastest. Start with [CONTRIBUTING.md](CONTRIBUTIN
 ## 💛 Support the project
 
 OpenRing is free and has no platform fee, and it stays that way. If it saves you money, you can help keep it going on
-[Patreon](https://www.patreon.com/cw/elifalanrocha). Telling someone who runs a voice agency about it helps just as much.
+[Patreon](https://www.patreon.com/cw/elifalanrocha), or with Pix if you're in Brazil (random key):
+
+```text
+0e0094ed-3545-4bff-991c-4b927633ac4a
+```
+
+Telling someone who runs a voice agency about it helps just as much.
 
 ## 🔒 Security
 
