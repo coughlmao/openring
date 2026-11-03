@@ -24,6 +24,14 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def normalize_time(text: str) -> str:
+    """An ISO 8601 date, with any offset (or none, meaning UTC), in the format `created_at` holds, so that comparing
+    the two as text is comparing the moments. ValueError for anything else."""
+    moment = datetime.fromisoformat(str(text).strip())
+    moment = moment.replace(tzinfo=timezone.utc) if moment.tzinfo is None else moment.astimezone(timezone.utc)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def _merge(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     doc = {**current, **{k: v for k, v in patch.items() if k not in PROTECTED}}
     doc["updatedAt"] = now_iso()

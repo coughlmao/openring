@@ -105,9 +105,9 @@ def test_the_overview_adds_up_what_calls_cost():
 
 
 def test_missing_provider_prices():
-    assert prices.stt("gladia", None) == 0.0125
+    assert prices.stt("gladia", None) is None  # not until its dollar price is on a page we can point to
     assert prices.tts("rime-ai", "coda") == 50.0
-    assert prices.tts("rime-ai", "mistv2") == 30.0
+    assert prices.tts("rime-ai", "mistv2") is None
     assert prices.tts("smallest-ai", "lightning_v3.1_pro") == 19.5
     assert prices.tts("neuphonic", None) is None
 

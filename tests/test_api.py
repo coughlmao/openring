@@ -358,73 +358,78 @@ def test_words_to_recognize_are_kept_and_bad_ones_refused():
     assert r.status_code == 400 and "keywords" in r.json()["detail"]
 
 
-def test_list_date_filters():
+def _clock(monkeypatch, *stamps):
+    """The next documents are created at these moments."""
+    moments = iter(stamps)
+    monkeypatch.setattr("openring.store.now_iso", lambda: next(moments))
+
+
+def _calls_between(client, **filters):
+    response = client.get("/call", params=filters, headers=AUTH)
+    assert response.status_code == 200, response.text
+    return {call["name"] for call in response.json()}
+
+
+def test_list_date_filters(monkeypatch):
     store = Store(":memory:")
-    client = TestClient(create_app(
-        Settings(
-            api_key="test-key",
-            public_url="https://ring.example.com",
-            db_path=":memory:",
-        ),
-        store,
-    ))
+    client = TestClient(create_app(Settings(api_key="test-key", db_path=":memory:"), store))
+    _clock(monkeypatch, "2026-01-01T10:00:00.250000Z", "2026-02-01T10:00:00.000000Z", "2026-03-01T10:00:00.000000Z")
+    for name in ("First", "Second", "Third"):
+        store.create("calls", {"name": name})
 
-    from datetime import datetime, timezone
-    import openring.store as store_module
+    assert _calls_between(client, createdAtGt="2026-01-15T00:00:00.000Z") == {"Second", "Third"}
+    assert _calls_between(client, createdAtLt="2026-02-15T00:00:00Z") == {"First", "Second"}
+    assert _calls_between(client, createdAtGe="2026-02-01T10:00:00Z") == {"Second", "Third"}
+    assert _calls_between(client, createdAtLe="2026-02-01T10:00:00Z") == {"First", "Second"}
+    assert _calls_between(client, createdAtGe="2026-01-15", createdAtLe="2026-02-15") == {"Second"}
+    assert _calls_between(client) == {"First", "Second", "Third"}
+    # A moment is a moment, whichever way it is written: this is 10:00 UTC, and the first call is 10:00:00.25.
+    assert _calls_between(client, createdAtGt="2026-01-01T07:00:00-03:00") == {"First", "Second", "Third"}
+    assert _calls_between(client, createdAtGt="2026-01-01T10:00:00+00:00") == {"First", "Second", "Third"}
+    assert _calls_between(client, createdAtGt="2026-01-01T10:00:01+00:00") == {"Second", "Third"}
+    assert _calls_between(client, createdAtLe="2026-02-01T07:00:00-03:00") == {"First", "Second"}
 
-    timestamps = iter([
-        "2026-01-01T10:00:00Z",
-        "2026-02-01T10:00:00Z",
-        "2026-03-01T10:00:00Z",
-    ])
 
-    monkeypatch_now = lambda: next(timestamps)
-    original_now = store_module.now_iso
-    store_module.now_iso = monkeypatch_now
+@pytest.mark.parametrize("value", ["yesterday", "2026-13-45", "", "1; DROP TABLE calls"])
+def test_a_date_that_is_not_one_is_refused_not_ignored(value):
+    client = TestClient(create_app(Settings(api_key="test-key", db_path=":memory:"), Store(":memory:")))
+    for path in ("/call", "/assistant", "/tool", "/phone-number"):
+        r = client.get(path, params={"createdAtLt": value}, headers=AUTH)
+        assert r.status_code == 400 and "createdAtLt" in r.json()["detail"], path
 
-    try:
-        for name in ("First", "Second", "Third"):
-            store.create("calls", {"name": name})
-    finally:
-        store_module.now_iso = original_now
 
-    # Greater than
-    response = client.get(
-        "/call?createdAtGt=2026-01-15T00:00:00Z",
-        headers=AUTH,
-    )
-    assert response.status_code == 200
-    assert {call["name"] for call in response.json()} == {"Second", "Third"}
+def test_every_list_that_takes_the_filters_applies_them(monkeypatch):
+    store = Store(":memory:")
+    client = TestClient(create_app(Settings(api_key="test-key", db_path=":memory:"), store))
+    _clock(monkeypatch, *["2026-01-01T00:00:00.000000Z"] * 4)
+    for collection in ("assistants", "tools", "phone_numbers", "calls"):
+        store.create(collection, {"name": collection})
+    for path in ("/assistant", "/tool", "/phone-number", "/call"):
+        assert len(client.get(path, headers=AUTH).json()) == 1
+        assert client.get(path, params={"createdAtGt": "2026-06-01"}, headers=AUTH).json() == []
+        assert len(client.get(path, params={"createdAtLt": "2026-06-01"}, headers=AUTH).json()) == 1
 
-    # Less than
-    response = client.get(
-        "/call?createdAtLt=2026-02-15T00:00:00Z",
-        headers=AUTH,
-    )
-    assert {call["name"] for call in response.json()} == {"First", "Second"}
 
-    # Greater than or equal
-    response = client.get(
-        "/call?createdAtGe=2026-02-01T10:00:00Z",
-        headers=AUTH,
-    )
-    assert {call["name"] for call in response.json()} == {"Second", "Third"}
+def test_importing_from_another_openring_gets_every_page(monkeypatch):
+    """The import pages back with createdAtLt. A server that ignored it sent the same first page again, for ever."""
+    import asyncio
 
-    # Less than or equal
-    response = client.get(
-        "/call?createdAtLe=2026-02-01T10:00:00Z",
-        headers=AUTH,
-    )
-    assert {call["name"] for call in response.json()} == {"First", "Second"}
+    import httpx
 
-    # Combined filters
-    response = client.get(
-        "/call?createdAtGe=2026-01-15T00:00:00Z"
-        "&createdAtLe=2026-02-15T00:00:00Z",
-        headers=AUTH,
-    )
-    assert {call["name"] for call in response.json()} == {"Second"}
+    from openring.importer import import_account
 
-    # No filters should return all records
-    response = client.get("/call", headers=AUTH)
-    assert len(response.json()) == 3
+    source = Store(":memory:")
+    app = create_app(Settings(api_key="test-key", db_path=":memory:"), source)
+    # Each at a moment of its own: paging by time can't tell apart what was made in the same tick of the clock.
+    with monkeypatch.context() as clock:
+        _clock(clock, *[f"2026-01-01T00:{i // 60:02d}:{i % 60:02d}.000000Z" for i in range(230)])
+        for i in range(230):
+            source.create("tools", {"type": "endCall", "name": f"tool {i}"})
+
+    async def go():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport) as client:
+            return await asyncio.wait_for(import_account("https://source.example.com", "test-key", Store(":memory:"),
+                                                         client=client), 60)
+
+    assert len(asyncio.run(go())["tools"]) == 230

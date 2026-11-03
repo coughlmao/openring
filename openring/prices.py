@@ -19,7 +19,7 @@ from typing import Any
 
 from loguru import logger
 
-UPDATED = "2026-11-01"  # when the speech-to-text and voice prices below were checked
+UPDATED = "2026-11-03"  # when the speech-to-text and voice prices below were checked
 # Per minute of audio sent to the transcriber. "<model>:multi" is the price with "language": "multi".
 STT: dict[str, dict[str, float]] = {
     "deepgram": {"*": 0.0077, "nova-3:multi": 0.0092, "flux-general-multi": 0.0078},  # deepgram.com/pricing
@@ -28,7 +28,6 @@ STT: dict[str, dict[str, float]] = {
     "11labs": {"*": 0.0065},  # Scribe v2 Realtime, $0.39/h: elevenlabs.io/pricing/api
     "cartesia": {"*": 0.0071},  # Ink: 3 credits/s on the Startup plan ($49 for 1.25M credits): cartesia.ai/pricing
     "whisper": {"*": 0.0},  # runs on this computer
-    "gladia": {"*": 0.0125},  # gladia.io/pricing (real-time: $0.75/hour)
 }
 # Per million characters the voice reads.
 TTS: dict[str, dict[str, float]] = {
@@ -38,8 +37,9 @@ TTS: dict[str, dict[str, float]] = {
     "cartesia": {"*": 39.2},  # Sonic: 1 credit per character on the Startup plan: cartesia.ai/pricing
     "inworld": {"inworld-tts-2": 25.0, "inworld-tts-2-flash": 15.0},  # on demand: inworld.ai/pricing
     "kokoro": {"*": 0.0},  # runs on this computer
-    "rime-ai": {"coda": 50.0, "mistv2": 30.0},  # rime.ai/pricing
-    "smallest-ai": {"lightning_v3.1": 17.5, "lightning_v3.1_pro": 19.5},  # smallest.ai/pricing/models
+    "rime-ai": {"coda": 50.0},  # Coda, $0.05 a minute at about 1K characters a minute: rime.ai/pricing
+    # $0.175 per 10K characters; Pro is listed as about $0.195: smallest.ai/pricing/models
+    "smallest-ai": {"lightning_v3.1": 17.5, "lightning_v3.1_pro": 19.5},
 }
 FREE_LLMS = {"ollama"}  # runs on this computer (OmniRoute may route to paid providers, so it isn't here)
 # How a route's "cheapest" order weighs input against output: a voice call sends its whole conversation on

@@ -8,6 +8,15 @@ All notable changes to OpenRing are listed here. The format follows
 
 ### Added
 
+- `openring --version` (thanks to Vaibhav R Valakunde, vaibhavrvalakunde2006-gif) and `openring --host`, which wins over
+  `HOST` and warns in its help that anything but localhost exposes the dashboard (thanks to Arin Aeruva, arin30).
+- Vapi's `createdAtGt`, `createdAtLt`, `createdAtGe` and `createdAtLe` on `GET /call`, `/assistant`, `/tool` and
+  `/phone-number`, filtered in SQL, in any ISO 8601 offset, with a 400 for a date that isn't one (thanks to
+  k_s_neeraj, Neeraj111010). Importing from another OpenRing with more than 100 items now gets every page.
+- **Disconnect** on the Providers page asks for a second click, labeled **Confirm disconnect**, before it removes a key
+  (thanks to Arin Aeruva, arin30).
+- Prices for Rime's Coda and Smallest.ai's Lightning voices, and `"*"` in `~/.openring/prices.json` now covers every
+  model of a provider, including the ones with a price of their own (thanks to Mohit Anand, coughlmao).
 - Squads (beta), in Vapi's format: several assistants on one call, each with its own prompt, tools, model and voice.
   `/squad`, the `handoff` tool and `assistantDestinations`, `squadId` on numbers, calls and `assistant-request`,
   `contextEngineeringPlan`, `firstMessageMode` and `tools:append`; the call's `handoffs` lists each change. The import

@@ -41,7 +41,7 @@ from .config import Settings, get_settings, is_placeholder_key
 from .importer import SourceError, import_account
 from .providers import ProviderError, resolve_plan
 from .server_messages import AssistantRequestError, request_assistant, server_of
-from .store import Store, is_phone_number, now_iso
+from .store import Store, is_phone_number, normalize_time, now_iso
 from .tools import ToolError, check_tool
 from .twilio import TwilioError, is_valid_signature, say_twiml, stream_twiml
 
@@ -170,6 +170,20 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
             secure=request.url.scheme == "https",
         )
         return response
+
+    def _created(gt: str | None, lt: str | None, ge: str | None, le: str | None) -> dict[str, str]:
+        """Vapi's `createdAtGt`, `createdAtLt`, `createdAtGe` and `createdAtLe` as Store.list's arguments."""
+        out: dict[str, str] = {}
+        for key, name, value in (("created_at_gt", "createdAtGt", gt), ("created_at_lt", "createdAtLt", lt),
+                                 ("created_at_ge", "createdAtGe", ge), ("created_at_le", "createdAtLe", le)):
+            if value is None:
+                continue
+            try:
+                out[key] = normalize_time(value)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"{name} must be an ISO 8601 date, "
+                                                            "like 2026-11-02T13:00:00Z") from None
+        return out
 
     def _get_or_404(collection: str, item_id: str) -> dict[str, Any]:
         doc = store.get(collection, item_id)
@@ -445,20 +459,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
 
     @app.get("/assistant", dependencies=auth_deps)
     def list_assistants(
-        limit: int = 100,
-        createdAtGt: str | None = None,
-        createdAtLt: str | None = None,
-        createdAtGe: str | None = None,
-        createdAtLe: str | None = None,
-        ) -> list[dict[str, Any]]:
-        return store.list(
-            "assistants",
-            limit,
-            created_at_gt=createdAtGt,
-            created_at_lt=createdAtLt,
-            created_at_ge=createdAtGe,
-            created_at_le=createdAtLe,
-            )
+        limit: int = 100, createdAtGt: str | None = None, createdAtLt: str | None = None,
+        createdAtGe: str | None = None, createdAtLe: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return store.list("assistants", limit, **_created(createdAtGt, createdAtLt, createdAtGe, createdAtLe))
 
     @app.get("/assistant/{assistant_id}", dependencies=auth_deps)
     def get_assistant(assistant_id: str) -> dict[str, Any]:
@@ -584,20 +588,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
 
     @app.get("/tool", dependencies=auth_deps)
     def list_tools(
-        limit: int = 100,
-        createdAtGt:str | None = None,
-        createdAtLt:str | None = None,
-        createdAtGe:str | None = None,
-        createdAtLe:str | None = None,
-) -> list[dict[str, Any]]:
-        return store.list(
-            "tools",
-            limit,
-            created_at_gt=createdAtGt,
-            created_at_lt=createdAtLt,
-            created_at_ge=createdAtGe,
-            created_at_le=createdAtLe,
-            )
+        limit: int = 100, createdAtGt: str | None = None, createdAtLt: str | None = None,
+        createdAtGe: str | None = None, createdAtLe: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return store.list("tools", limit, **_created(createdAtGt, createdAtLt, createdAtGe, createdAtLe))
 
     @app.get("/tool/{tool_id}", dependencies=auth_deps)
     def get_tool(tool_id: str) -> dict[str, Any]:
@@ -773,20 +767,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
 
     @app.get("/phone-number", dependencies=auth_deps)
     def list_phone_numbers(
-        limit: int = 100,
-        createdAtGt: str | None = None,
-        createdAtLt: str | None = None,
-        createdAtGe: str | None = None,
-        createdAtLe: str | None = None,
+        limit: int = 100, createdAtGt: str | None = None, createdAtLt: str | None = None,
+        createdAtGe: str | None = None, createdAtLe: str | None = None,
     ) -> list[dict[str, Any]]:
-        return store.list(
-        "phone_numbers",
-        limit,
-        created_at_gt=createdAtGt,
-        created_at_lt=createdAtLt,
-        created_at_ge=createdAtGe,
-        created_at_le=createdAtLe,
-    )
+        return store.list("phone_numbers", limit, **_created(createdAtGt, createdAtLt, createdAtGe, createdAtLe))
 
     @app.get("/phone-number/{number_id}", dependencies=auth_deps)
     def get_phone_number(number_id: str) -> dict[str, Any]:
@@ -811,20 +795,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
     # ---- Calls ------------------------------------------------------------------
     @app.get("/call", dependencies=auth_deps)
     def list_calls(
-        limit: int = 100,
-        createdAtGt:str | None = None,
-        createdAtLt:str | None = None,
-        createdAtGe:str | None = None,
-        createdAtLe:str | None = None,
-        ) -> list[dict[str, Any]]:
-        return store.list(
-            "calls",
-            limit,
-            created_at_gt=createdAtGt,
-            created_at_lt=createdAtLt,
-            created_at_ge=createdAtGe,
-            created_at_le=createdAtLe,
-            )
+        limit: int = 100, createdAtGt: str | None = None, createdAtLt: str | None = None,
+        createdAtGe: str | None = None, createdAtLe: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return store.list("calls", limit, **_created(createdAtGt, createdAtLt, createdAtGe, createdAtLe))
 
     def _finished_recording(call_id: str) -> tuple[dict[str, Any], Path]:
         call = _get_or_404("calls", call_id)
