@@ -670,6 +670,11 @@ Small pull requests get merged fastest. Start with [CONTRIBUTING.md](CONTRIBUTIN
 [good first issues](https://github.com/elifalanrocha/openring/labels/good%20first%20issue); see
 [CHANGELOG.md](CHANGELOG.md) for what shipped.
 
+## 💛 Support the project
+
+OpenRing is free and has no platform fee, and it stays that way. If it saves you money, you can help keep it going on
+[Patreon](https://www.patreon.com/cw/elifalanrocha). Telling someone who runs a voice agency about it helps just as much.
+
 ## 🔒 Security
 
 `openring` generates `OPENRING_API_KEY` on its first run; without a key, the API answers only the computer it

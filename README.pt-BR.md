@@ -440,6 +440,17 @@ Pull requests pequenos entram mais rápido. Comece pelo [CONTRIBUTING.md](CONTRI
 [good first issues](https://github.com/elifalanrocha/openring/labels/good%20first%20issue). Falhas de
 segurança, por favor, de forma privada: veja o [SECURITY.md](SECURITY.md).
 
+## 💛 Apoie o projeto
+
+O OpenRing é grátis, sem taxa de plataforma, e continua assim. Se ele economiza dinheiro para você, ajude a mantê-lo no
+[Patreon](https://www.patreon.com/cw/elifalanrocha) ou por Pix (chave aleatória):
+
+```text
+0e0094ed-3545-4bff-991c-4b927633ac4a
+```
+
+Indicar para quem tem uma agência de agentes de voz ajuda tanto quanto.
+
 ## 📄 Licença
 
 MIT. Sem vínculo com Vapi, Retell, Dograh ou Twilio. O OpenRing usa o
