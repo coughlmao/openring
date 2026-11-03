@@ -46,6 +46,8 @@ KEY_PAGES = {
     "inworld": "https://platform.inworld.ai/",
     "twilio": "https://console.twilio.com/",
     "telnyx": "https://portal.telnyx.com/#/api-keys",
+    "plivo": "https://console.plivo.com/dashboard/",
+    "vonage": "https://dashboard.nexmo.com/applications",
     "genesys": "https://help.mypurecloud.com/articles/configure-audio-connector/",
 }
 
@@ -62,6 +64,14 @@ def _connectors() -> dict[str, dict[str, Any]]:
     # The public key (Keys & Credentials > Public Key) checks that webhooks come from Telnyx.
     found["telnyx"] = {"fields": [("TELNYX_API_KEY", "API key"), ("TELNYX_PUBLIC_KEY", "Public key")],
                        "keysUrl": KEY_PAGES["telnyx"]}
+    found["plivo"] = {"fields": [("PLIVO_AUTH_ID", "Auth ID"), ("PLIVO_AUTH_TOKEN", "Auth token")],
+                      "keysUrl": KEY_PAGES["plivo"]}
+    # The private key is the file Vonage lets you download when you create the application; the signature secret is
+    # under Settings > API settings.
+    found["vonage"] = {"fields": [("VONAGE_APPLICATION_ID", "Application ID"),
+                                  ("VONAGE_PRIVATE_KEY", "Private key file"),
+                                  ("VONAGE_SIGNATURE_SECRET", "Signature secret")],
+                       "keysUrl": KEY_PAGES["vonage"]}
     # You choose both (the dashboard can generate them) and paste the same into Genesys's Audio Connector.
     found["genesys"] = {"fields": [("GENESYS_API_KEY", "API key"), ("GENESYS_CLIENT_SECRET", "Client secret")],
                         "keysUrl": KEY_PAGES["genesys"], "generate": True}
@@ -69,10 +79,14 @@ def _connectors() -> dict[str, dict[str, Any]]:
 
 
 CONNECTORS = _connectors()
-NAMES = {**PROVIDER_NAMES, "twilio": "Twilio", "telnyx": "Telnyx", "genesys": "Genesys Cloud"}
+NAMES = {**PROVIDER_NAMES, "twilio": "Twilio", "telnyx": "Telnyx", "plivo": "Plivo", "vonage": "Vonage",
+         "genesys": "Genesys Cloud"}
 OPENROUTER_EXCHANGE_URL = "https://openrouter.ai/api/v1/auth/keys"
 # Keys are single tokens; anything else (spaces, quotes, line breaks) would break the .env file.
 VALUE_RE = re.compile(r"^[A-Za-z0-9_\-.:+/=]{8,512}$")
+# A file's path may also have backslashes (Windows), but no spaces or quotes: the settings file has no quoting.
+PATH_FIELDS = {"VONAGE_PRIVATE_KEY"}
+PATH_RE = re.compile(r"^[A-Za-z0-9_\-.:+/=\\]{3,512}$")
 TIMEOUT = 15
 
 
@@ -115,9 +129,16 @@ def clean_values(provider: str, values: dict[str, Any]) -> dict[str, str]:
         value = str(values.get(env) or "").strip()
         if not value:
             raise ConnectError(f"enter the {label.lower()}")
-        if not VALUE_RE.match(value):
+        if not (PATH_RE if env in PATH_FIELDS else VALUE_RE).match(value):
             raise ConnectError(f"that doesn't look like a {NAMES[provider]} {label.lower()}; paste it again")
         cleaned[env] = value
+    if provider == "vonage":
+        from . import vonage
+
+        try:  # the file has to be there, and be a key, before a call finds out
+            vonage.make_jwt(cleaned["VONAGE_APPLICATION_ID"], cleaned["VONAGE_PRIVATE_KEY"])
+        except vonage.VonageError as exc:
+            raise ConnectError(str(exc)) from exc
     if provider == "genesys":
         try:
             base64.b64decode(cleaned["GENESYS_CLIENT_SECRET"], validate=True)
@@ -141,6 +162,14 @@ def _check_request(provider: str, values: dict[str, str]) -> tuple[str, dict[str
         sid = values["TWILIO_ACCOUNT_SID"]
         return (f"https://api.twilio.com/2010-04-01/Accounts/{sid}.json",
                 {"auth": (sid, values["TWILIO_AUTH_TOKEN"])})
+    if provider == "plivo":
+        auth_id = values["PLIVO_AUTH_ID"]
+        return f"https://api.plivo.com/v1/Account/{auth_id}/", {"auth": (auth_id, values["PLIVO_AUTH_TOKEN"])}
+    if provider == "vonage":  # listing one call takes the same token as placing one
+        from . import vonage
+
+        token = vonage.make_jwt(values["VONAGE_APPLICATION_ID"], values["VONAGE_PRIVATE_KEY"])
+        return f"{vonage.API}?page_size=1", {"headers": _bearer(token)}
     key = values[env_of(provider)]
     if provider in CHECKS:
         url, headers = CHECKS[provider]
@@ -176,7 +205,7 @@ async def check(provider: str, values: dict[str, str], client: httpx.AsyncClient
 
 
 # Providers whose API says how much is left on the account.
-BALANCES = ("openrouter", "deepgram", "11labs", "twilio", "telnyx")
+BALANCES = ("openrouter", "deepgram", "11labs", "twilio", "telnyx", "plivo")
 LOW_MONEY = 2.0  # dollars; and under a tenth of a character allowance
 
 
@@ -234,6 +263,13 @@ async def _read_balance(provider: str, values: dict[str, str], client: httpx.Asy
             return None
         body = res.json()
         return _money(float(body.get("balance") or 0), str(body.get("currency") or "usd"))
+    if provider == "plivo":
+        auth_id = values["PLIVO_AUTH_ID"]
+        res = await client.get(f"https://api.plivo.com/v1/Account/{auth_id}/",
+                               auth=(auth_id, values["PLIVO_AUTH_TOKEN"]))
+        if res.status_code != 200:
+            return None
+        return _money(float(res.json().get("cash_credits") or 0), "usd")
     if provider == "telnyx":
         res = await client.get("https://api.telnyx.com/v2/balance", headers=_bearer(values["TELNYX_API_KEY"]))
         if res.status_code != 200:

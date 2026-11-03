@@ -71,6 +71,11 @@ def test_the_assistant_editor_keeps_a_limit_left_as_shown():
     assert "minutes: Math.max(1, Math.round(" in PAGE
 
 
+def test_nothing_else_is_called_app():
+    # The page finds its root by this id; a form field with the same one would take its place.
+    assert PAGE.count('id="app"') == 1
+
+
 def test_dates_use_the_interface_language():
     # The page is in English; dates in the browser's language read "30 de out." among English words.
     assert not re.search(r"toLocale(Date|Time)?String\(\s*(\[\]|undefined)?\s*[,)]", PAGE)

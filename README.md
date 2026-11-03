@@ -95,8 +95,8 @@ latency is recorded, step by step, and shown in the dashboard.
 | Free local stack | ✅ Whisper, Ollama, Kokoro | ❌ | ❌ | ✅ Open models you host |
 | Calls at once | No limit of its own, your server decides (**beta**) | 4, then US$10 per line a month | 20, then US$8 per call a month | 10 by default when self-hosted, you can raise it; 10 in its cloud |
 | Backup model | ✅ From any provider, when one fails or is slow (**beta**) | Same provider only, on OpenAI and Bedrock | ✅ Takes over when the main model fails or is slow | — |
-| Phone lines | Twilio (outgoing in **beta**); incoming only on Telnyx and Genesys (**beta**); SIP trunks over UDP (**beta**) | ✅ Twilio, Vonage, Telnyx, SIP | ✅ Twilio, Telnyx, SIP | ✅ Twilio, Vonage, Telnyx, Plivo, Vobiz, Cloudonix, Asterisk |
-| Campaigns | Twilio and SIP (**beta**), no retries yet | ✅ | ✅ | ✅ With retries |
+| Phone lines | Twilio (outgoing in **beta**); Telnyx, Plivo and Vonage (**beta**); incoming only on Genesys (**beta**); any carrier by SIP trunk over UDP (**beta**) | ✅ Twilio, Vonage, Telnyx, SIP | ✅ Twilio, Telnyx, SIP | ✅ Twilio, Vonage, Telnyx, Plivo, Vobiz, Cloudonix, Asterisk |
+| Campaigns | Every line that calls out (**beta**), no retries yet | ✅ | ✅ | ✅ With retries |
 | Knowledge base (RAG) | ✅ Free, on your server, matching words; or your own search (**beta**) | ✅ Google Gemini, or your own server | ✅ | ✅ |
 | Several assistants in one call | ✅ Squads, in Vapi's format (**beta**) | ✅ Squads | ✅ | ✅ |
 | Visual flow builder | ❌ Not planned for now | Canvas for squads | ✅ | ✅ |
@@ -120,11 +120,11 @@ with any of them.
 | Callers in any language: the assistant answers in theirs (`"language": "multi"`) | |
 | Several assistants on one call, handing the caller to one another: squads and the `handoff` tool (**beta**) | Handoffs chosen by your server, and to a whole squad |
 | A knowledge base: files the assistant searches during a call, free and on your server, or your own search (**beta**) | Search by meaning, built in |
-| Incoming phone calls through Twilio, confirmed on a real call | Outbound calls through Telnyx and Genesys; Plivo |
+| Incoming phone calls through Twilio, confirmed on a real call | Outbound calls through Genesys |
 | SIP trunks: any carrier, no Twilio in between, in and out (**beta**) | SIP over TCP and TLS |
 | Outgoing calls through Twilio (**beta**: tell us how it goes) | |
 | Campaigns: one assistant calls a list or CSV, a few at a time, greeting each person by name (**beta**) | |
-| Incoming calls through Telnyx (**beta**, see [Telnyx](#telnyx-beta)) | |
+| Calls in and out through Telnyx, Plivo and Vonage (**beta**, see [Telnyx](#telnyx-beta), [Plivo](#plivo-beta) and [Vonage](#vonage-beta)) | |
 | Genesys Cloud calls through its Audio Connector, inside your Architect flows (**beta**, see [Genesys](#genesys-cloud-beta)) | |
 | Vapi-style `/assistant`, `/phone-number`, `/call`, `/campaign` and `/tool` APIs | |
 | Cost per call in dollars, per provider, at list prices (`cost` and `costBreakdown`) | The phone line's cost |
@@ -133,7 +133,7 @@ with any of them.
 | Import assistants, tools and numbers from a Vapi account | |
 | 16 models, 6 speech-to-text and 9 voice providers, with Vapi's names | |
 | Per-turn latency, time to first word, tokens and voice characters per call, with traffic lights | |
-| Credit left on OpenRouter, Deepgram, ElevenLabs, Twilio and Telnyx, on the Providers page | |
+| Credit left on OpenRouter, Deepgram, ElevenLabs, Twilio, Telnyx and Plivo, on the Providers page | |
 | Call history with transcripts, light and dark themes | |
 
 The full plan is in the [roadmap](ROADMAP.md).
@@ -453,6 +453,18 @@ someone else's bill, so OpenRing answers only the gateways of your trunks and wh
 everyone else without a word; a softphone on your network works by listing its address as a gateway. The password goes in and never comes back
 through the API. It's kept in OpenRing's database, and SIP over UDP isn't encrypted, as is usual with carriers.
 
+**With your carrier.** Whoever it is, it comes down to the same fields. SIP over UDP has to be on, with G.711:
+
+| OpenRing | What it is at the carrier |
+|---|---|
+| `gateways[].ip` | The SIP server or termination address it gives you, like `sip.telnyx.com` or `sip.zadarma.com` |
+| `authUsername`, `authPassword` | The trunk's SIP login. A carrier that goes by IP instead needs your public address on its allow-list |
+| `sipRegisterPlan` | Only if it asks you to register, as many that give you a login do |
+| Where to send calls | Your public address, port 5060, which the carrier calls the origination URI or the like |
+
+The same goes for a PBX like Asterisk or FreePBX: add a SIP trunk pointing at OpenRing, and list the PBX's address as a
+gateway.
+
 Not available yet: SIP over TCP or TLS, voicemail detection, and codecs other than G.711. On Twilio or Telnyx, SIP
 domains and trunks already reach their webhooks: the number in the `sip:` address finds the assistant, and
 `customer.sipUri` dials out through Twilio. No real carrier has carried a call through this yet, so please tell us how
@@ -516,7 +528,7 @@ route makes it `custom`. Without a route, `"maxLatencyMs"` on an assistant's `mo
 Every call records what its providers charge, at list prices, in Vapi's fields: `cost` (US$) and
 `costBreakdown.llm`, `.stt`, `.tts` and `.total`, next to the tokens, voice characters and seconds of audio it
 used. A call that switched providers is priced per provider. The dashboard shows it per call and per minute.
-The phone line (Twilio, Telnyx) isn't included yet.
+The phone line (Twilio, Telnyx, Plivo, Vonage) isn't included yet.
 
 Model prices ship with OpenRing (`openring/llm_prices.json`, from [LiteLLM](https://github.com/BerriAI/litellm)'s
 price list and OpenRouter's model list); speech-to-text and voice prices come from each provider's pricing
@@ -535,11 +547,31 @@ model of that provider. `GET /prices` shows every price in use.
 
 ### Telnyx (beta)
 
-Incoming calls through Telnyx are new and not yet confirmed on a real Telnyx call. In the Telnyx portal,
+Calls through Telnyx are new and not yet confirmed on a real Telnyx call. In the Telnyx portal,
 create a **TeXML Application** whose voice URL is `$PUBLIC_URL/telnyx/voice` (HTTP POST) and assign your
 number to it. Add the number in OpenRing with `"provider": "telnyx"`, and set `TELNYX_API_KEY` and
 `TELNYX_PUBLIC_KEY` (Keys & Credentials > Public Key), or connect Telnyx from the Providers page. Every
-webhook is checked against that public key. Outbound calls and transfers go through Twilio for now.
+webhook is checked against that public key.
+
+To call out, name the TeXML application: `TELNYX_APPLICATION_ID`, or `texmlApplicationId` on the number. `POST /call` and
+campaigns then work as on Twilio. Transfers and voicemail detection aren't available on Telnyx yet.
+
+### Plivo (beta)
+
+Not yet confirmed on a real Plivo call. In the Plivo console, create an **Application** whose Answer URL is
+`$PUBLIC_URL/plivo/voice` and Hangup URL `$PUBLIC_URL/plivo/status` (both HTTP POST) and assign your number to it. Add
+the number in OpenRing with `"provider": "plivo"`, and set `PLIVO_AUTH_ID` and `PLIVO_AUTH_TOKEN`, or connect Plivo from
+the Providers page. Every webhook's signature is checked with that token. Calls in and out, campaigns and `transferCall`
+work; voicemail detection isn't available on Plivo yet.
+
+### Vonage (beta)
+
+Not yet confirmed on a real Vonage call. In the Vonage dashboard, create a **Voice application** with signed webhooks on,
+Answer URL `$PUBLIC_URL/vonage/voice` and Event URL `$PUBLIC_URL/vonage/event`, and link your number to it. Add the number
+in OpenRing with `"provider": "vonage"`, and set `VONAGE_APPLICATION_ID`, `VONAGE_PRIVATE_KEY` (the path of the file
+Vonage lets you download) and `VONAGE_SIGNATURE_SECRET` (Settings > API settings), or connect Vonage from the Providers
+page. Calls in and out, campaigns and `transferCall` work, with audio at 16 kHz; voicemail detection isn't available on
+Vonage yet.
 
 ### Genesys Cloud (beta)
 

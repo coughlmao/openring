@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from openring import providers, whisper
+from openring.config import Settings
 from openring.providers import ProviderError, build_services, resolve_plan
 
 pytest.importorskip("faster_whisper")
@@ -122,11 +123,7 @@ def test_phone_audio_reaches_whisper_at_16_khz(loaded):
 
 
 def test_the_providers_page_explains_whisper():
-    row = next(r for r in providers.provider_status(type("S", (), {"twilio_account_sid": "", "twilio_auth_token": "",
-                                                                   "public_url": "", "telnyx_api_key": "",
-                                                                   "telnyx_public_key": "", "genesys_api_key": "",
-                                                                   "genesys_client_secret": ""})())
-               if r["id"] == "whisper")
+    row = next(r for r in providers.provider_status(Settings(db_path=":memory:")) if r["id"] == "whisper")
     assert row["kind"] == "transcriber" and row["free"] and row["env"] is None
 
 

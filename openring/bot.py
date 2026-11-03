@@ -30,6 +30,7 @@ LATENCY_PARTS = {
 LATENCY_FIELDS = (*dict.fromkeys(LATENCY_PARTS.values()), "turnLatency")
 # Phone audio is 8 kHz; browser calls keep Pipecat's defaults (16 kHz in, 24 kHz out).
 PHONE_SAMPLE_RATE = 8000
+WIDEBAND_SAMPLE_RATE = 16000  # Vonage's streams
 # How a call ended, as long as nothing has said otherwise.
 CALLER_ENDED = "customer-ended-call"
 # How long a call past its limit may take to finish what it is saying: a provider that hangs must not keep the
@@ -296,6 +297,56 @@ def telnyx_transport(websocket: WebSocket, call_data: dict[str, Any], settings: 
             audio_out_enabled=True,
             add_wav_header=False,
             serializer=serializer,
+        ),
+    )
+
+
+def plivo_transport(websocket: WebSocket, call_data: dict[str, Any], settings: Settings) -> Any:
+    """Audio of a phone call, carried by a Plivo audio stream (XML <Stream bidirectional="true">)."""
+    from pipecat.serializers.plivo import PlivoFrameSerializer
+    from pipecat.transports.websocket.fastapi import (
+        FastAPIWebsocketParams,
+        FastAPIWebsocketTransport,
+    )
+
+    # Auto hang-up uses the Plivo REST API, so it needs the auth id and token and the call's id.
+    can_hang_up = bool(settings.plivo_auth_id and settings.plivo_auth_token and call_data.get("call_id"))
+    serializer = PlivoFrameSerializer(
+        stream_id=call_data["stream_id"],
+        call_id=call_data.get("call_id"),
+        auth_id=settings.plivo_auth_id or None,
+        auth_token=settings.plivo_auth_token or None,
+        params=PlivoFrameSerializer.InputParams(auto_hang_up=can_hang_up),
+    )
+    return FastAPIWebsocketTransport(
+        websocket=websocket,
+        params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            add_wav_header=False,
+            serializer=serializer,
+        ),
+    )
+
+
+def vonage_transport(websocket: WebSocket) -> Any:
+    """Audio of a Vonage call, carried by a websocket the NCCO connected: 16 kHz linear PCM, 20 ms at a time."""
+    from pipecat.serializers.vonage import VonageFrameSerializer
+    from pipecat.transports.websocket.fastapi import (
+        FastAPIWebsocketParams,
+        FastAPIWebsocketTransport,
+    )
+
+    from .vonage import PACKET_BYTES
+
+    return FastAPIWebsocketTransport(
+        websocket=websocket,
+        params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            add_wav_header=False,
+            serializer=VonageFrameSerializer(),
+            fixed_audio_packet_size=PACKET_BYTES,
         ),
     )
 

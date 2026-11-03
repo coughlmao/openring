@@ -184,8 +184,122 @@ def test_dashboard_connects_telnyx(monkeypatch, tmp_path):
     assert provider_status(Settings(db_path=":memory:"))[-1]["ready"] is False
 
 
-def test_outbound_calls_refuse_telnyx_numbers_for_now(monkeypatch):
-    client, _, _ = app(monkeypatch)
+def _dial(client, number="+5511912345678"):
     n = client.get("/phone-number", headers=AUTH).json()[0]
-    r = client.post("/call", json={"phoneNumberId": n["id"], "customer": {"number": "+5511912345678"}}, headers=AUTH)
-    assert r.status_code == 400 and "Twilio" in r.json()["detail"]
+    return client.post("/call", json={"phoneNumberId": n["id"], "customer": {"number": number}}, headers=AUTH)
+
+
+@pytest.fixture
+def placed(monkeypatch):
+    calls = []
+
+    async def create_call(api_key, application_id, *, to, from_, url, status_callback):
+        calls.append({"key": api_key, "application": application_id, "to": to, "from": from_, "url": url,
+                      "status_callback": status_callback})
+        return "v3:out-1"
+
+    monkeypatch.setattr(telnyx, "create_call", create_call)
+    return calls
+
+
+def test_an_outgoing_call_goes_through_a_texml_application_and_is_answered(monkeypatch, placed):
+    client, store, a = app(monkeypatch, telnyx_application_id="app-1")
+    r = _dial(client, "+55 11 91234-5678")
+    assert r.status_code == 201, r.text
+    call = r.json()
+    assert (call["type"], call["status"], call["phoneCallProvider"], call["phoneCallProviderId"]) == (
+        "outboundPhoneCall", "queued", "telnyx", "v3:out-1")
+    assert placed == [{"key": "KEY123", "application": "app-1", "to": "+5511912345678", "from": "+15551234567",
+                       "url": f"https://x.test/telnyx/voice?callId={call['id']}",
+                       "status_callback": f"https://x.test/telnyx/status?callId={call['id']}"}]
+
+    def fetched(call_id):
+        body = urlencode({"CallSid": "v3:out-1", "To": "+5511912345678"}).encode()
+        return client.post(f"/telnyx/voice?callId={call_id}", content=body, headers={
+            "content-type": "application/x-www-form-urlencoded", **sign(body)})
+
+    stream = ET.fromstring(fetched(call["id"]).text).find("./Connect/Stream")
+    assert stream.get("url") == f"wss://x.test/ws/telnyx?callId={call['id']}"
+    assert ET.fromstring(fetched("made-up").text).find("./Connect/Stream") is None
+    store.update("calls", call["id"], {"status": "in-progress"})  # already connected: nothing to connect again
+    assert ET.fromstring(fetched(call["id"]).text).find("./Connect/Stream") is None
+    body = urlencode({"CallSid": "v3:out-1"}).encode()
+    unsigned = client.post(f"/telnyx/voice?callId={call['id']}", content=body, headers={
+        "content-type": "application/x-www-form-urlencoded"})
+    assert unsigned.status_code == 403
+
+
+def test_the_number_can_name_its_own_application(monkeypatch, placed):
+    client, _, _ = app(monkeypatch, telnyx_application_id="app-1")
+    n = client.get("/phone-number", headers=AUTH).json()[0]
+    client.patch(f"/phone-number/{n['id']}", json={"texmlApplicationId": "app-of-this-number"}, headers=AUTH)
+    assert _dial(client).status_code == 201
+    assert placed[0]["application"] == "app-of-this-number"
+
+
+def test_an_outgoing_call_that_nobody_answered_ends_with_the_reason(monkeypatch, placed):
+    client, store, _ = app(monkeypatch, telnyx_application_id="app-1")
+    call = _dial(client).json()
+    body = urlencode({"CallStatus": "no-answer"}).encode()
+    r = client.post(f"/telnyx/status?callId={call['id']}", content=body, headers={
+        "content-type": "application/x-www-form-urlencoded", **sign(body)})
+    assert r.status_code == 204
+    ended = store.get("calls", call["id"])
+    assert (ended["status"], ended["endedReason"]) == ("ended", "customer-did-not-answer")
+    other = _dial(client, "+5511912345679").json()
+    store.update("calls", other["id"], {"status": "in-progress"})  # it connected: the bot ends it, not this hook
+    body = urlencode({"CallStatus": "completed"}).encode()
+    client.post(f"/telnyx/status?callId={other['id']}", content=body, headers={
+        "content-type": "application/x-www-form-urlencoded", **sign(body)})
+    assert store.get("calls", other["id"])["status"] == "in-progress"
+
+
+def test_outgoing_calls_need_the_key_an_application_and_a_phone_number(monkeypatch, placed):
+    client, _, _ = app(monkeypatch)  # no application anywhere
+    r = _dial(client)
+    assert r.status_code == 400 and "TELNYX_APPLICATION_ID" in r.json()["detail"]
+    client, _, _ = app(monkeypatch, telnyx_application_id="app-1", public_url="")
+    assert "PUBLIC_URL" in _dial(client).json()["detail"]
+    client, _, _ = app(monkeypatch, telnyx_application_id="app-1")
+    n = client.get("/phone-number", headers=AUTH).json()[0]
+    r = client.post("/call", json={"phoneNumberId": n["id"], "customer": {"sipUri": "sip:a@b.example"}},
+                    headers=AUTH)
+    assert r.status_code == 400 and "customer.number" in r.json()["detail"]
+    assert placed == []
+
+
+def test_a_refusal_from_telnyx_is_recorded_and_explained(monkeypatch):
+    client, store, _ = app(monkeypatch, telnyx_application_id="app-1")
+
+    async def refuse(*_a, **_k):
+        raise telnyx.TelnyxError("Caller ID not verified (Telnyx error 422)")
+
+    monkeypatch.setattr(telnyx, "create_call", refuse)
+    r = _dial(client)
+    assert r.status_code == 400 and "Telnyx did not place the call" in r.json()["detail"]
+    assert store.list("calls")[0]["endedReason"] == "telnyx-failed-to-connect-call"
+
+
+def test_telnyxs_api_call(monkeypatch):
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, str(request.url), request.headers["authorization"], parse_qs(
+            request.content.decode())))
+        if request.headers["authorization"] == "Bearer bad":
+            return httpx.Response(401, json={"errors": [{"title": "Unauthorized", "detail": "Invalid key"}]})
+        return httpx.Response(200, json={"data": {"call_sid": "v3:77", "status": "queued"}})
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    sid = asyncio.run(telnyx.create_call("KEY123", "app-1", to="+5511", from_="+1555", url="https://x/v",
+                                         status_callback="https://x/s"))
+    assert sid == "v3:77"
+    method, url, auth, form = seen[0]
+    assert (method, url, auth) == ("POST", "https://api.telnyx.com/v2/texml/calls/app-1", "Bearer KEY123")
+    assert form == {"To": ["+5511"], "From": ["+1555"], "Url": ["https://x/v"], "UrlMethod": ["POST"],
+                    "StatusCallback": ["https://x/s"], "StatusCallbackMethod": ["POST"]}
+    with pytest.raises(telnyx.TelnyxError, match="Invalid key"):
+        asyncio.run(telnyx.create_call("bad", "app-1", to="x", from_="y", url="u", status_callback="s"))

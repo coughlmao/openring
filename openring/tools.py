@@ -552,7 +552,7 @@ def make_handler(tool: dict[str, Any], controls: CallControls):
             return
         if controls.transfer is None:
             await params.result_callback(
-                "Transfers only work on Twilio phone calls for now. Tell the caller you cannot transfer."
+                "This line can't transfer calls. Tell the caller you cannot transfer."
             )
             return
         await params.result_callback(

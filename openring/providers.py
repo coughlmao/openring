@@ -248,6 +248,13 @@ def provider_status(settings: Any) -> list[dict[str, Any]]:
     rows.append({"id": "telnyx", "name": "Telnyx", "kind": "telephony", "env": "TELNYX_API_KEY",
                  "ready": bool(settings.telnyx_api_key and settings.telnyx_public_key and settings.public_url),
                  "note": None if settings.public_url else "set PUBLIC_URL so Telnyx can reach this server"})
+    rows.append({"id": "plivo", "name": "Plivo", "kind": "telephony", "env": "PLIVO_AUTH_TOKEN",
+                 "ready": bool(settings.plivo_auth_id and settings.plivo_auth_token and settings.public_url),
+                 "note": None if settings.public_url else "set PUBLIC_URL so Plivo can reach this server"})
+    rows.append({"id": "vonage", "name": "Vonage", "kind": "telephony", "env": "VONAGE_APPLICATION_ID",
+                 "ready": bool(settings.vonage_application_id and settings.vonage_private_key
+                               and settings.vonage_signature_secret and settings.public_url),
+                 "note": None if settings.public_url else "set PUBLIC_URL so Vonage can reach this server"})
     rows.append({"id": "genesys", "name": "Genesys Cloud", "kind": "telephony", "env": "GENESYS_API_KEY",
                  "ready": bool(settings.genesys_api_key and settings.genesys_client_secret and settings.public_url),
                  "note": None if settings.public_url else "set PUBLIC_URL so Genesys can reach this server"})

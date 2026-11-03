@@ -49,6 +49,25 @@ class Settings:
         default_factory=lambda: _env("VALIDATE_TELNYX_SIGNATURE", "true").lower() != "false"
     )
 
+    # Telnyx outgoing calls go through a TeXML application; a number can name its own with `texmlApplicationId`.
+    telnyx_application_id: str = field(default_factory=lambda: _env("TELNYX_APPLICATION_ID"))
+
+    # Plivo: the auth id and token place calls and check each webhook's signature.
+    plivo_auth_id: str = field(default_factory=lambda: _env("PLIVO_AUTH_ID"))
+    plivo_auth_token: str = field(default_factory=lambda: _env("PLIVO_AUTH_TOKEN"))
+    validate_plivo_signature: bool = field(
+        default_factory=lambda: _env("VALIDATE_PLIVO_SIGNATURE", "true").lower() != "false"
+    )
+
+    # Vonage: the application's id and private key (the file Vonage lets you download, or its text) place calls;
+    # the account's signature secret checks each webhook.
+    vonage_application_id: str = field(default_factory=lambda: _env("VONAGE_APPLICATION_ID"))
+    vonage_private_key: str = field(default_factory=lambda: _env("VONAGE_PRIVATE_KEY"))
+    vonage_signature_secret: str = field(default_factory=lambda: _env("VONAGE_SIGNATURE_SECRET"))
+    validate_vonage_signature: bool = field(
+        default_factory=lambda: _env("VALIDATE_VONAGE_SIGNATURE", "true").lower() != "false"
+    )
+
     # Genesys Cloud: the API key and client secret of its Audio Connector integration. Genesys sends the key
     # and signs every connection with the secret.
     genesys_api_key: str = field(default_factory=lambda: _env("GENESYS_API_KEY"))

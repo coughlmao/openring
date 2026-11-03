@@ -8,6 +8,8 @@ All notable changes to OpenRing are listed here. The format follows
 
 ### Added
 
+- Calls in and out through Plivo and Vonage, and out through Telnyx (beta): signed webhooks, campaigns, and
+  `transferCall` on Plivo and Vonage. Connect them on the Providers page. The import brings Telnyx and Vonage numbers.
 - `openring --version` (thanks to Vaibhav R Valakunde, vaibhavrvalakunde2006-gif) and `openring --host`, which wins over
   `HOST` and warns in its help that anything but localhost exposes the dashboard (thanks to Arin Aeruva, arin30).
 - Vapi's `createdAtGt`, `createdAtLt`, `createdAtGe` and `createdAtLe` on `GET /call`, `/assistant`, `/tool` and

@@ -507,11 +507,13 @@ const caller = c => c.type === "webCall" ? "Browser test" : c.type === "outbound
 // Who answered a call: a saved assistant, or a transient one that lives in the call record.
 const assistantOf = (c, assistants) => c.squadId || c.squad ? "Squad" : c.assistant?.name || assistants.find(a => a.id === c.assistantId)?.name || (c.assistant ? "Transient assistant" : "Deleted assistant");
 const TYPE = { webCall: "Browser", inboundPhoneCall: "Inbound", outboundPhoneCall: "Outbound" };
-const failed = c => /^(pipeline-error|provider-error|assistant-not-found|twilio-failed|sip-failed)/.test(c.endedReason || "");
+const failed = c => /^(pipeline-error|provider-error|assistant-not-found|twilio-failed|telnyx-failed|plivo-failed|vonage-failed|sip-failed)/.test(c.endedReason || "");
 const ENDED = {
   "customer-ended-call": "Caller hung up", "assistant-said-end-call-phrase": "Assistant said goodbye",
   "customer-busy": "Line busy", "customer-did-not-answer": "No answer",
-  "twilio-failed-to-connect-call": "Twilio couldn't connect", "sip-failed-to-connect-call": "The SIP trunk couldn't connect", "assistant-not-found": "Assistant was deleted",
+  "twilio-failed-to-connect-call": "Twilio couldn't connect", "sip-failed-to-connect-call": "The SIP trunk couldn't connect",
+  "telnyx-failed-to-connect-call": "Telnyx couldn't connect", "plivo-failed-to-connect-call": "Plivo couldn't connect",
+  "vonage-failed-to-connect-call": "Vonage couldn't connect", "assistant-not-found": "Assistant was deleted",
   "assistant-ended-call": "Assistant ended the call", "assistant-forwarded-call": "Transferred",
   "worker-shutdown": "Server restarted", "silence-timed-out": "Silence timed out",
   "exceeded-max-duration": "Reached the time limit", "voicemail": "Voicemail",
@@ -725,7 +727,7 @@ function openImport() {
         ${r.assistants.map(a => line(a.name, a.problems, a.created ? "" : ' <span class="muted">(updated)</span>')).join("")}
         ${r.tools.filter(t => t.problems.length).map(t => line("Tool " + t.name, t.problems)).join("")}
         ${(r.squads || []).map(s => line("Squad " + s.name, s.problems)).join("")}
-        ${r.phoneNumbers.map(n => n.skipped ? `<div class="minirow"><span>${esc(n.number)}</span><span class="muted" style="font-size:12.5px">${esc(n.skipped)}</span></div>` : line(n.number, [], ' <span class="muted">· point its Twilio voice webhook here</span>')).join("")}`;
+        ${r.phoneNumbers.map(n => n.skipped ? `<div class="minirow"><span>${esc(n.number)}</span><span class="muted" style="font-size:12.5px">${esc(n.skipped)}</span></div>` : line(n.number, [], ' <span class="muted">· point its voice webhook here</span>')).join("")}`;
       go_.hidden = true;
       $("#importClose").textContent = "Done";
       $("#importClose").onclick = () => { if (location.hash.startsWith("#assistants")) viewAssistants(); };
@@ -998,18 +1000,25 @@ async function viewNumbers() {
     <div class="copyline"><code>${esc(info.twilioVoiceUrl)}</code><button class="btn ghost small" data-copy="${esc(info.twilioVoiceUrl)}">${ICON.copy}Copy</button></div>
     <p><b>Telnyx:</b> create a TeXML Application with this voice URL (HTTP POST) and assign the number to it:</p>
     <div class="copyline"><code>${esc(info.telnyxVoiceUrl)}</code><button class="btn ghost small" data-copy="${esc(info.telnyxVoiceUrl)}">${ICON.copy}Copy</button></div>
+    <p><b>Plivo:</b> create an <b>Application</b> with this Answer URL and Hangup URL (both HTTP POST) and assign the number to it. Set your Auth ID and token on the <a href="#providers">Providers</a> page.</p>
+    <div class="copyline"><code>${esc(info.plivoVoiceUrl)}</code><button class="btn ghost small" data-copy="${esc(info.plivoVoiceUrl)}">${ICON.copy}Copy</button></div>
+    <div class="copyline"><code>${esc(info.plivoStatusUrl)}</code><button class="btn ghost small" data-copy="${esc(info.plivoStatusUrl)}">${ICON.copy}Copy</button></div>
+    <p><b>Vonage:</b> create a <b>Voice application</b> with this Answer URL and Event URL (HTTP POST, <b>signed webhooks</b> on), assign the number to it, and set its application ID, private key file and signature secret on the <a href="#providers">Providers</a> page.</p>
+    <div class="copyline"><code>${esc(info.vonageVoiceUrl)}</code><button class="btn ghost small" data-copy="${esc(info.vonageVoiceUrl)}">${ICON.copy}Copy</button></div>
+    <div class="copyline"><code>${esc(info.vonageEventUrl)}</code><button class="btn ghost small" data-copy="${esc(info.vonageEventUrl)}">${ICON.copy}Copy</button></div>
     <p><b>Genesys Cloud:</b> create an <b>Audio Connector</b> integration with this base connection URI and the API key and client secret you set on the <a href="#providers">Providers</a> page. In Architect, the <b>Call Audio Connector</b> action picks the assistant with an <code>assistantId</code> input variable, or add the called number below with provider Genesys. Afterwards, the output variable <code>action</code> is <code>finished</code> or <code>transfer</code>, with the number in <code>transferTo</code>.</p>
     <div class="copyline"><code>${esc(info.genesysUrl)}</code><button class="btn ghost small" data-copy="${esc(info.genesysUrl)}">${ICON.copy}Copy</button></div>
     ${info.publicUrl ? "" : `<p class="muted" style="margin-bottom:0">Phone providers can't reach <code>localhost</code>. Start a tunnel (<code>cloudflared tunnel --url http://localhost:8000</code>), put its URL in <code>PUBLIC_URL</code> and restart.</p>`}
     <form id="add" style="display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin-top:18px">
       <div class="field" style="margin:0;flex:1;min-width:180px"><label for="num">Number</label><input id="num" name="num" required placeholder="+15551234567"></div>
-      <div class="field" style="margin:0;min-width:120px"><label for="np">Provider</label><select id="np" name="np"><option value="twilio">Twilio</option><option value="telnyx">Telnyx</option><option value="genesys">Genesys</option>${trunks.map(t => `<option value="sip:${esc(t.id)}">SIP: ${esc(t.name || t.gateways[0].ip)}</option>`).join("")}</select></div>
+      <div class="field" style="margin:0;min-width:120px"><label for="np">Provider</label><select id="np" name="np"><option value="twilio">Twilio</option><option value="telnyx">Telnyx</option><option value="plivo">Plivo</option><option value="vonage">Vonage</option><option value="genesys">Genesys</option>${trunks.map(t => `<option value="sip:${esc(t.id)}">SIP: ${esc(t.name || t.gateways[0].ip)}</option>`).join("")}</select></div>
       <div class="field" style="margin:0;flex:1;min-width:180px"><label for="as">Answered by</label><select id="as" name="as">${assistants.map(a => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}${teams.map(s => `<option value="squad:${esc(s.id)}">Squad: ${esc(s.name || "Untitled")}</option>`).join("")}</select></div>
+      <div class="field" id="appField" hidden style="margin:0;flex:1;min-width:200px"><label for="texmlApp">TeXML application ID</label><input id="texmlApp" name="app" placeholder="Only to call out" autocomplete="off"></div>
       <button class="btn">${ICON.plus}Add number</button>
     </form><div class="error" id="err" role="alert"></div></div></section>
   ${nums.length ? `<div class="tiles">${nums.map(n => `<article class="tile">
       <div class="head"><span class="avatar">${ICON.phone}</span><div class="grow"><div class="name">${esc(n.number)}</div><div class="sub">Answered by ${esc(answeredBy(n))}</div></div><span class="badge">${esc(n.provider === "byo-phone-number" ? "SIP" : n.provider || "twilio")}</span></div>
-      <div class="actions">${["twilio", "byo-phone-number"].includes(n.provider || "twilio") && !n.squadId ? `<button class="btn ghost small" data-call="${esc(n.id)}">${ICON.phone}Call a phone</button>` : ""}<span style="flex:1"></span><button class="btn danger small" data-del="${esc(n.id)}">Remove</button></div>
+      <div class="actions">${["twilio", "telnyx", "plivo", "vonage", "byo-phone-number"].includes(n.provider || "twilio") && !n.squadId ? `<button class="btn ghost small" data-call="${esc(n.id)}">${ICON.phone}Call a phone</button>` : ""}<span style="flex:1"></span><button class="btn danger small" data-del="${esc(n.id)}">Remove</button></div>
     </article>`).join("")}</div>`
     : `<div class="panel empty">No numbers yet. Add your Twilio number above.</div>`}
   <section class="panel" style="margin-top:18px"><header><h2>SIP trunks <span class="badge">beta</span></h2></header><div class="body">
@@ -1025,10 +1034,11 @@ async function viewNumbers() {
       <button class="btn">${ICON.plus}Add trunk</button>
     </form><div class="error" id="trunkErr" role="alert"></div></div></section>`;
   copyButtons(v);
+  $("#np").onchange = () => { $("#appField").hidden = $("#np").value !== "telnyx"; };
   $("#add").onsubmit = async e => {
     e.preventDefault(); const f = new FormData(e.target);
     const [kind, who] = [f.get("np"), f.get("as")];
-    const trunk = kind.startsWith("sip:") ? { provider: "byo-phone-number", credentialId: kind.slice(4), numberE164CheckEnabled: /^\+\d{7,15}$/.test(f.get("num").trim()) ? undefined : false } : { provider: kind };
+    const trunk = kind.startsWith("sip:") ? { provider: "byo-phone-number", credentialId: kind.slice(4), numberE164CheckEnabled: /^\+\d{7,15}$/.test(f.get("num").trim()) ? undefined : false } : { provider: kind, ...(kind === "telnyx" && f.get("app").trim() ? { texmlApplicationId: f.get("app").trim() } : {}) };
     try { await api("/phone-number", { method: "POST", body: JSON.stringify({ number: f.get("num"), ...(who.startsWith("squad:") ? { squadId: who.slice(6) } : { assistantId: who }), ...trunk }) }); viewNumbers(); }
     catch (err) { $("#err").textContent = err.message; }
   };
@@ -1045,7 +1055,7 @@ async function viewNumbers() {
 
 // The number's assistant calls a phone: an outbound call, placed by Twilio.
 function callPhone(n, assistantName) {
-  $("#callFrom").textContent = `${assistantName} calls from ${n.number}.` + (n.provider === "byo-phone-number" ? "" : " On a Twilio trial account, only verified numbers can be called.");
+  $("#callFrom").textContent = `${assistantName} calls from ${n.number}.` + ((n.provider || "twilio") === "twilio" ? " On a Twilio trial account, only verified numbers can be called." : "");
   $("#callTo").value = store.get("openring-call-to") || "";
   $("#callErr").textContent = "";
   $("#callDialog").showModal();
@@ -1285,7 +1295,7 @@ function routeModel(route, f) {
   return { routeId: undefined, provider: f.get("mp"), model: f.get("mm") };
 }
 
-const UNREACHED = /^(customer-busy|customer-did-not-answer|twilio-failed|voicemail)/;
+const UNREACHED = /^(customer-busy|customer-did-not-answer|twilio-failed|telnyx-failed|plivo-failed|vonage-failed|voicemail)/;
 let campaignTab = "calls";
 async function viewCampaign(id) {
   const [c, assistants, nums] = await Promise.all([api("/campaign/" + id), api("/assistant"), api("/phone-number")]);
@@ -1580,6 +1590,8 @@ const ABOUT = {
   "voice:kokoro": "Free voice that runs on this computer",
   "telephony:twilio": "Phone numbers and calls",
   "telephony:telnyx": "Phone numbers and calls, often cheaper",
+  "telephony:plivo": "Phone numbers and calls, in many countries",
+  "telephony:vonage": "Phone numbers and calls, with wideband audio",
   "telephony:genesys": "Contact center calls, through Audio Connector",
 };
 const cardKey = p => `${p.kind}:${p.id}`;
@@ -1691,6 +1703,9 @@ const PROVIDER_ACTIONS = {
 
 const sentence = s => s[0].toUpperCase() + s.slice(1) + (/[.!?]$/.test(s) ? "" : ".");
 
+// What isn't a secret, and is easier to get right when you can read it: an id, a file's path.
+const PLAIN_FIELDS = /^(VONAGE_APPLICATION_ID|VONAGE_PRIVATE_KEY|PLIVO_AUTH_ID)$/;
+
 // Paste a key; the server checks it with the provider before saving.
 function openConnect(p) {
   const d = $("#keyDialog");
@@ -1704,7 +1719,7 @@ function openConnect(p) {
     : (oauth ? `<button type="button" class="btn wide" id="keyOauth">Sign in with ${esc(p.name)}</button><span class="or">or paste a key</span>` : "")
       + `Get ${p.connect.fields.length > 1 ? "them" : "a key"} at <a href="${esc(p.connect.keysUrl)}" target="_blank" rel="noopener">${esc(host)} ↗</a> and paste ${p.connect.fields.length > 1 ? "them" : "it"} here.`;
   if (oauth) $("#keyOauth").onclick = () => { d.close(); signInOpenRouter(); };
-  $("#keyFields").innerHTML = p.connect.fields.map((f, i) => `<div class="field"><label for="kf${i}">${esc(f.label)}</label><input id="kf${i}" name="${esc(f.env)}" type="${gen ? "text" : "password"}" required autocomplete="off" spellcheck="false">${gen ? `<div class="row-actions" style="margin-top:6px"><button type="button" class="btn ghost small" data-gen="${i}">Generate</button><button type="button" class="btn ghost small" data-copyfield="${i}">${ICON.copy}Copy</button></div>` : ""}</div>`).join("");
+  $("#keyFields").innerHTML = p.connect.fields.map((f, i) => `<div class="field"><label for="kf${i}">${esc(f.label)}</label><input id="kf${i}" name="${esc(f.env)}" type="${gen || PLAIN_FIELDS.test(f.env) ? "text" : "password"}" required autocomplete="off" spellcheck="false"${PLAIN_FIELDS.test(f.env) ? ' placeholder="' + esc(f.env.endsWith("KEY") ? "C:/keys/private.key" : "") + '"' : ""}>${f.env === "VONAGE_PRIVATE_KEY" ? '<p class="hint" style="margin-top:6px">The path of the file Vonage let you download when you created the application. Use forward slashes and no spaces.</p>' : ""}${gen ? `<div class="row-actions" style="margin-top:6px"><button type="button" class="btn ghost small" data-gen="${i}">Generate</button><button type="button" class="btn ghost small" data-copyfield="${i}">${ICON.copy}Copy</button></div>` : ""}</div>`).join("");
   $("#keyFields").querySelectorAll("[data-gen]").forEach(b => b.onclick = () => {
     const input = $("#kf" + b.dataset.gen), bytes = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
     // A client secret is base64, as Genesys expects; a key just needs to be long and URL-safe.

@@ -235,7 +235,7 @@ def test_transfer_handler_moves_the_call_or_explains_why_not():
     browser, log = _controls(transfer=False)
     params = Params({"destination": "+5511900000002"})
     _run(tools.make_handler(TRANSFER, browser)(params))
-    assert "only work on Twilio phone calls" in params.results[0][0] and log == []
+    assert "can't transfer" in params.results[0][0] and log == []
 
 
 def test_a_transfer_that_fails_gets_an_answer():

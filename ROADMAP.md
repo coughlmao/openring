@@ -9,9 +9,9 @@ something, or pick an item and say you're on it. Shipped work moves to the [chan
 - **Faster local speech-to-text on a CPU:** streaming Moonshine for the languages it covers. The 100% local
   stack itself (Whisper, Ollama, Kokoro) is in.
 - **The phone line in the cost per call.** Calls already record what their models, transcribers and voices
-  cost; next is the Twilio or Telnyx minute.
-- **More telephony:** outbound calls through Telnyx and Genesys Cloud (incoming calls through both are in
-  beta), and Plivo.
+  cost; next is the minute on the line.
+- **More telephony:** transfers through Telnyx, voicemail detection beyond Twilio, outbound calls through Genesys Cloud,
+  and Exotel. Telnyx, Plivo and Vonage are in beta, in and out.
 - **Campaigns, next steps:** retrying busy and unanswered numbers, calling hours per time zone, and Vapi's
   campaign webhooks. Campaigns themselves are in (beta).
 - **Calls over WhatsApp.**

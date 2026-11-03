@@ -73,7 +73,7 @@ def test_import_copies_tools_assistants_and_twilio_numbers():
 
     number = store.find_phone_number("+15551234567")
     assert number["assistantId"] == front["id"] and "twilioAuthToken" not in number
-    assert {"number": "+15557654321", "skipped": "vonage numbers are not supported yet"} in report["phoneNumbers"]
+    assert "+15557654321" in [n["number"] for n in store.list("phone_numbers")]  # a Vonage number works here too
     assert {"number": "not-a-number", "skipped": "not a phone number with its country code"} in report["phoneNumbers"]
 
 
@@ -84,7 +84,7 @@ def test_import_again_updates_instead_of_duplicating():
     renamed.pop("analysisPlan")
     report = run(store, {**DATA, "assistant": [renamed, UNSUPPORTED]})
     assert len(store.list("assistants")) == 2 and len(store.list("tools")) == 2
-    assert len(store.list("phone_numbers")) == 1
+    assert len(store.list("phone_numbers")) == 2
     front = next(a for a in store.list("assistants") if a["importedFrom"]["id"] == "a-1")
     assert front["name"] == "Reception" and front.get("analysisPlan") is None
     assert all(not a["created"] for a in report["assistants"])

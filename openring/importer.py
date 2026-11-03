@@ -18,6 +18,7 @@ from .store import Store, is_phone_number
 from .tools import SUPPORTED, ToolError, check_tool
 
 PAGE = 100
+IMPORTED_LINES = ("twilio", "telnyx", "vonage")  # Vapi's other kinds are its own numbers and SIP trunks
 # Fields the source server owns, or secrets that should not be copied.
 DROP = {"id", "orgId", "createdAt", "updatedAt", "isServerUrlSecretSet",
         "twilioAuthToken", "twilioApiSecret", "credentialId", "credentialIds"}
@@ -162,10 +163,10 @@ async def import_account(
     for number in numbers:
         provider = str(number.get("provider") or "")
         label = number.get("number") or number.get("sipUri") or number.get("name") or number.get("id")
-        if provider == "twilio" and not is_phone_number(number.get("number")):
+        if provider in IMPORTED_LINES and not is_phone_number(number.get("number")):
             report["phoneNumbers"].append({"number": label, "skipped": "not a phone number with its country code"})
             continue
-        if provider != "twilio" or not number.get("number"):
+        if provider not in IMPORTED_LINES or not number.get("number"):
             reason = f"{provider or 'these'} numbers are not supported yet"
             report["phoneNumbers"].append({"number": label, "skipped": reason})
             continue

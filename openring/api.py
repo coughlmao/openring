@@ -7,6 +7,8 @@ import hmac
 import json
 import os
 import re
+import secrets
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -27,6 +29,7 @@ from . import (
     knowledge,
     netguard,
     overrides,
+    plivo,
     prices,
     providers,
     recordings,
@@ -36,6 +39,7 @@ from . import (
     stats,
     telnyx,
     twilio,
+    vonage,
 )
 from .config import Settings, get_settings, is_placeholder_key
 from .importer import SourceError, import_account
@@ -83,6 +87,13 @@ class Refused(Exception):
         self.call = call
         self.detail = detail
 
+
+# The phone providers a number can call out through, by its `provider`.
+OUTBOUND = ("twilio", "telnyx", "plivo", "vonage", "byo-phone-number")
+LINE_NAMES = {"twilio": "Twilio", "telnyx": "Telnyx", "plivo": "Plivo", "vonage": "Vonage"}
+# How long a transfer's instructions wait for the carrier to fetch them.
+TRANSFER_WAIT_SECONDS = 120
+MAX_PENDING_TRANSFERS = 1000
 
 # Campaign fields the server keeps up to date; a client's copy of them is ignored.
 CAMPAIGN_OWNED = {"id", "orgId", "createdAt", "updatedAt", "status", "endedReason", "endedAt", "error", "calls",
@@ -346,6 +357,10 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
             "baseUrl": base,
             "twilioVoiceUrl": base + "/twilio/voice",
             "telnyxVoiceUrl": base + "/telnyx/voice",
+            "plivoVoiceUrl": base + "/plivo/voice",
+            "plivoStatusUrl": base + "/plivo/status",
+            "vonageVoiceUrl": base + "/vonage/voice",
+            "vonageEventUrl": base + "/vonage/event",
             "genesysUrl": re.sub(r"^http", "ws", base) + "/ws/genesys",
             "sipPort": sip_server.port or settings.sip_port,
             "sipRtpPorts": settings.sip_rtp_ports,
@@ -375,6 +390,13 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         if provider == "telnyx":
             settings.telnyx_api_key = values["TELNYX_API_KEY"]
             settings.telnyx_public_key = values["TELNYX_PUBLIC_KEY"]
+        if provider == "plivo":
+            settings.plivo_auth_id = values["PLIVO_AUTH_ID"]
+            settings.plivo_auth_token = values["PLIVO_AUTH_TOKEN"]
+        if provider == "vonage":
+            settings.vonage_application_id = values["VONAGE_APPLICATION_ID"]
+            settings.vonage_private_key = values["VONAGE_PRIVATE_KEY"]
+            settings.vonage_signature_secret = values["VONAGE_SIGNATURE_SECRET"]
         if provider == "genesys":
             settings.genesys_api_key = values["GENESYS_API_KEY"]
             settings.genesys_client_secret = values["GENESYS_CLIENT_SECRET"]
@@ -876,8 +898,9 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
 
     def _outbound_number(number_id: str) -> dict[str, Any]:
         number = _get_or_404("phone_numbers", number_id)
-        if (number.get("provider") or "twilio") not in ("twilio", "byo-phone-number"):
-            raise HTTPException(status_code=400, detail="outbound calls go through Twilio numbers and SIP trunks")
+        if (number.get("provider") or "twilio") not in OUTBOUND:
+            raise HTTPException(status_code=400, detail="outbound calls go through Twilio, Telnyx, Plivo and Vonage "
+                                                        "numbers and SIP trunks")
         return number
 
     def _customer(value: Any, where: str, *, sip_address: bool = False) -> dict[str, Any]:
@@ -907,10 +930,28 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
             if store.get("credentials", str(number.get("credentialId") or "")) is None:
                 raise HTTPException(status_code=400, detail="the number's SIP trunk was deleted")
             return
-        if not (settings.twilio_account_sid and settings.twilio_auth_token):
+        provider = number.get("provider") or "twilio"
+        if provider == "telnyx":
+            if not (settings.telnyx_api_key and (number.get("texmlApplicationId") or settings.telnyx_application_id)):
+                raise HTTPException(status_code=400, detail="outbound calls through Telnyx need TELNYX_API_KEY and a "
+                                                            "TeXML application: TELNYX_APPLICATION_ID, or "
+                                                            "texmlApplicationId on the number")
+        elif provider == "plivo":
+            if not (settings.plivo_auth_id and settings.plivo_auth_token):
+                raise HTTPException(status_code=400, detail="outbound calls need PLIVO_AUTH_ID and PLIVO_AUTH_TOKEN")
+        elif provider == "vonage":
+            if not (settings.vonage_application_id and settings.vonage_private_key):
+                raise HTTPException(status_code=400, detail="outbound calls need VONAGE_APPLICATION_ID and "
+                                                            "VONAGE_PRIVATE_KEY")
+            try:
+                vonage.load_key(settings.vonage_private_key)
+            except vonage.VonageError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        elif not (settings.twilio_account_sid and settings.twilio_auth_token):
             raise HTTPException(status_code=400, detail="outbound calls need TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN")
         if not settings.public_url:
-            raise HTTPException(status_code=400, detail="outbound calls need PUBLIC_URL (where Twilio reaches you)")
+            raise HTTPException(status_code=400, detail=f"outbound calls need PUBLIC_URL (where "
+                                                        f"{LINE_NAMES[provider]} reaches you)")
 
     async def dial(
         number: dict[str, Any], customer: dict[str, Any], record: dict[str, Any], assistant: dict[str, Any]
@@ -931,26 +972,49 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
                 patch = {"status": "ended", "endedReason": "sip-failed-to-connect-call", "endedAt": now_iso()}
                 raise Refused(store.update("calls", call["id"], patch), str(exc)) from exc
             return store.update("calls", call["id"], {"phoneCallProvider": "sip"})
+        provider = number.get("provider") or "twilio"
+        here, there = settings.public_url, _e164(number["number"])
         try:
-            sid = await twilio.create_call(
-                settings.twilio_account_sid,
-                settings.twilio_auth_token,
-                to=to,
-                from_=_e164(number["number"]),
-                url=f"{settings.public_url}/twilio/voice?callId={call['id']}",
-                status_callback=f"{settings.public_url}/twilio/status?callId={call['id']}",
-                machine_detection=twilio.machine_detection(assistant),
-            )
-        except (TwilioError, httpx.HTTPError) as exc:
-            patch = {"status": "ended", "endedReason": "twilio-failed-to-connect-call", "endedAt": now_iso()}
+            if provider == "telnyx":
+                sid = await telnyx.create_call(
+                    settings.telnyx_api_key, number.get("texmlApplicationId") or settings.telnyx_application_id,
+                    to=to, from_=there, url=f"{here}/telnyx/voice?callId={call['id']}",
+                    status_callback=f"{here}/telnyx/status?callId={call['id']}",
+                )
+            elif provider == "plivo":
+                sid = await plivo.create_call(
+                    settings.plivo_auth_id, settings.plivo_auth_token, to=to, from_=there,
+                    answer_url=f"{here}/plivo/voice?callId={call['id']}",
+                    hangup_url=f"{here}/plivo/status?callId={call['id']}",
+                )
+            elif provider == "vonage":
+                sid = await vonage.create_call(
+                    settings.vonage_application_id, settings.vonage_private_key, to=to, from_=there,
+                    ws_url=f"{settings.public_ws_url}/ws/vonage?callId={call['id']}",
+                    event_url=f"{here}/vonage/event?callId={call['id']}",
+                )
+            else:
+                sid = await twilio.create_call(
+                    settings.twilio_account_sid,
+                    settings.twilio_auth_token,
+                    to=to,
+                    from_=there,
+                    url=f"{here}/twilio/voice?callId={call['id']}",
+                    status_callback=f"{here}/twilio/status?callId={call['id']}",
+                    machine_detection=twilio.machine_detection(assistant),
+                )
+        except (TwilioError, telnyx.TelnyxError, plivo.PlivoError, vonage.VonageError, httpx.HTTPError) as exc:
+            patch = {"status": "ended", "endedReason": f"{provider}-failed-to-connect-call", "endedAt": now_iso()}
             raise Refused(store.update("calls", call["id"], patch), str(exc)) from exc
-        return store.update("calls", call["id"], {"phoneCallProviderId": sid})
+        return store.update("calls", call["id"], {"phoneCallProviderId": sid or None, "phoneCallProvider": provider})
 
     @app.post("/call", status_code=201, dependencies=auth_deps)
     async def create_call(body: dict[str, Any]) -> dict[str, Any]:
         """Outbound phone call, Vapi-style: the assistant calls `customer.number` from one of your numbers."""
         number = _outbound_number(str(body.get("phoneNumberId") or ""))
         customer = _customer(body.get("customer"), "customer", sip_address=True)
+        if (number.get("provider") or "twilio") in ("telnyx", "plivo", "vonage") and not customer.get("number"):
+            raise HTTPException(status_code=400, detail="customer.number is required: this line calls phone numbers")
         extra = overrides.combine(customer.get("assistantOverrides"), body.get("assistantOverrides"))
         transient = body.get("assistant") if isinstance(body.get("assistant"), dict) else None
         squad = body.get("squad") if isinstance(body.get("squad"), dict) else None
@@ -982,7 +1046,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         try:
             return await dial(number, customer, record, applied)
         except Refused as exc:
-            carrier = "The SIP trunk" if number.get("provider") == "byo-phone-number" else "Twilio"
+            carrier = LINE_NAMES.get(number.get("provider") or "twilio", "The SIP trunk")
             raise HTTPException(status_code=400, detail=f"{carrier} did not place the call: {exc.detail}") from exc
 
     # ---- Campaigns (Vapi's /campaign): one assistant calls a list of people --------------
@@ -1318,13 +1382,149 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         if not settings.public_url:
             logger.error("PUBLIC_URL is not set; Telnyx cannot reach the media websocket")
             return Response(say_twiml("This line is not configured yet."), media_type="application/xml")
+        # Telnyx's stream start carries no custom parameters, so the call id rides in the websocket URL.
+        if call_id := request.query_params.get("callId"):  # an outgoing call we placed (POST /call), answered
+            call = store.get("calls", call_id)
+            if not call or call.get("status") != "queued":
+                logger.warning("call {}: Telnyx asked for a call that isn't waiting; not connecting", call_id)
+                return Response(say_twiml("Sorry, this call could not be connected."), media_type="application/xml")
+            logger.info("call {} answered; streaming it to its assistant", call_id)
+            return Response(telnyx.stream_texml(f"{settings.public_ws_url}/ws/telnyx?callId={call_id}"),
+                            media_type="application/xml")
         answer = await answer_inbound(sip.user_of(form.get("From", "")), sip.user_of(form.get("To", "")),
                                       form.get("CallSid") or form.get("CallControlId"), "telnyx")
         if isinstance(answer, str):
             return Response(say_twiml(answer), media_type="application/xml")
-        # Telnyx's stream start carries no custom parameters, so the call id rides in the websocket URL.
         url = f"{settings.public_ws_url}/ws/telnyx?callId={answer['id']}"
         return Response(telnyx.stream_texml(url), media_type="application/xml")
+
+    @app.post("/telnyx/status", status_code=204)
+    async def telnyx_status(request: Request) -> Response:
+        """Final status of an outgoing Telnyx call. Records the calls that never reached the assistant."""
+        form = await telnyx_form(request)
+        logger.info("call {}: Telnyx status {}", request.query_params.get("callId"), form.get("CallStatus"))
+        if reason := telnyx.UNREACHED.get(form.get("CallStatus", "")):
+            patch = {"status": "ended", "endedReason": reason, "endedAt": now_iso()}
+            store.claim("calls", request.query_params.get("callId", ""), "queued", patch)
+        return Response(status_code=204)
+
+    # ---- Plivo ---------------------------------------------------------------------
+    async def plivo_form(request: Request) -> dict[str, str]:
+        """The webhook's fields, once their signature proves the request comes from Plivo."""
+        if request.method == "GET":
+            fields, signed = dict(request.query_params), {}  # a GET's fields are in the URL, which is signed whole
+        else:
+            fields = {k: str(v) for k, v in (await request.form()).items()}
+            signed = fields
+        if settings.validate_plivo_signature:
+            if not settings.plivo_auth_token:
+                logger.error("refused a request: set PLIVO_AUTH_TOKEN so OpenRing can check it comes from Plivo")
+                raise HTTPException(status_code=403,
+                                    detail="PLIVO_AUTH_TOKEN is not set, so the signature cannot be checked")
+            # Plivo signs the exact URL it requested, query string included.
+            base = settings.public_url or f"{request.url.scheme}://{request.url.netloc}"
+            url = base + request.url.path + (f"?{request.url.query}" if request.url.query else "")
+            given = ",".join(h for h in (request.headers.get("X-Plivo-Signature-V3", ""),
+                                         request.headers.get("X-Plivo-Signature-Ma-V3", "")) if h)
+            if not plivo.is_valid_signature(settings.plivo_auth_token, request.method, url, signed,
+                                            request.headers.get("X-Plivo-Signature-V3-Nonce", ""), given):
+                logger.warning("refused a request to {}: invalid Plivo signature", url)
+                raise HTTPException(status_code=403, detail="invalid Plivo signature")
+        return fields
+
+    @app.api_route("/plivo/voice", methods=["GET", "POST"])
+    async def plivo_voice(request: Request) -> Response:
+        """Answer URL of a Plivo Application: connects a call to its assistant."""
+        form = await plivo_form(request)
+        if not settings.public_url:
+            logger.error("PUBLIC_URL is not set; Plivo cannot reach the media websocket")
+            return Response(plivo.say_xml("This line is not configured yet."), media_type="application/xml")
+        # The call id rides in the websocket's URL: Plivo's stream start carries no custom parameters.
+        if call_id := request.query_params.get("callId"):  # an outgoing call we placed (POST /call), answered
+            call = store.get("calls", call_id)
+            if not call or call.get("status") != "queued":
+                logger.warning("call {}: Plivo asked for a call that isn't waiting; not connecting", call_id)
+                return Response(plivo.say_xml("Sorry, this call could not be connected."),
+                                media_type="application/xml")
+            logger.info("call {} answered; streaming it to its assistant", call_id)
+            return Response(plivo.stream_xml(f"{settings.public_ws_url}/ws/plivo?callId={call_id}"),
+                            media_type="application/xml")
+        answer = await answer_inbound(sip.user_of(form.get("From", "")), sip.user_of(form.get("To", "")),
+                                      form.get("CallUUID"), "plivo")
+        if isinstance(answer, str):
+            return Response(plivo.say_xml(answer), media_type="application/xml")
+        return Response(plivo.stream_xml(f"{settings.public_ws_url}/ws/plivo?callId={answer['id']}"),
+                        media_type="application/xml")
+
+    @app.api_route("/plivo/status", methods=["GET", "POST"], status_code=204)
+    async def plivo_status(request: Request) -> Response:
+        """Hangup URL of an outgoing Plivo call. Records the calls that never reached the assistant."""
+        form = await plivo_form(request)
+        logger.info("call {}: Plivo status {}", request.query_params.get("callId"), form.get("CallStatus"))
+        if reason := plivo.UNREACHED.get(form.get("CallStatus", "")):
+            patch = {"status": "ended", "endedReason": reason, "endedAt": now_iso()}
+            store.claim("calls", request.query_params.get("callId", ""), "queued", patch)
+        return Response(status_code=204)
+
+    # Where Plivo is sent to fetch a transfer's instructions: a token that works once, for the chosen number.
+    plivo_transfers: dict[str, tuple[str, float]] = {}
+
+    @app.api_route("/plivo/transfer/{token}", methods=["GET", "POST"])
+    async def plivo_transfer(token: str, request: Request) -> Response:
+        await plivo_form(request)
+        wanted = plivo_transfers.pop(token, None)
+        if wanted is None or wanted[1] < time.monotonic():
+            return Response(plivo.hangup_xml(), media_type="application/xml")
+        return Response(plivo.dial_xml(wanted[0]), media_type="application/xml")
+
+    # ---- Vonage ----------------------------------------------------------------------
+    async def vonage_params(request: Request) -> dict[str, Any]:
+        """The webhook's fields, once its signed token proves the request comes from Vonage."""
+        body = await request.body()
+        if settings.validate_vonage_signature:
+            if not settings.vonage_signature_secret:
+                logger.error("refused a request: set VONAGE_SIGNATURE_SECRET so OpenRing can check it's Vonage's")
+                raise HTTPException(status_code=403,
+                                    detail="VONAGE_SIGNATURE_SECRET is not set, so the signature cannot be checked")
+            token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+            if not vonage.verify_webhook(settings.vonage_signature_secret, token, body,
+                                         application_id=settings.vonage_application_id):
+                logger.warning("refused a request to {}: invalid Vonage signature", request.url.path)
+                raise HTTPException(status_code=403, detail="invalid Vonage signature")
+        fields: dict[str, Any] = dict(request.query_params)
+        if body and request.headers.get("content-type", "").startswith("application/json"):
+            try:
+                sent = json.loads(body)
+            except ValueError:
+                sent = None
+            fields.update(sent if isinstance(sent, dict) else {})
+        return fields
+
+    @app.api_route("/vonage/voice", methods=["GET", "POST"])
+    async def vonage_voice(request: Request) -> Response:
+        """Answer URL of a Vonage Application: answers with the NCCO that connects a call to its assistant."""
+        fields = await vonage_params(request)
+        if not settings.public_url:
+            logger.error("PUBLIC_URL is not set; Vonage cannot reach the media websocket")
+            return JSONResponse(vonage.say_ncco("This line is not configured yet."))
+        caller = str(fields.get("from") or "")
+        caller = "+" + caller if caller.isdigit() else caller
+        answer = await answer_inbound(caller, str(fields.get("to") or ""), str(fields.get("uuid") or "") or None,
+                                      "vonage")
+        if isinstance(answer, str):
+            return JSONResponse(vonage.say_ncco(answer))
+        return JSONResponse(vonage.connect_ncco(f"{settings.public_ws_url}/ws/vonage?callId={answer['id']}"))
+
+    @app.api_route("/vonage/event", methods=["GET", "POST"], status_code=204)
+    async def vonage_event(request: Request) -> Response:
+        """Event URL of a Vonage Application. Records the outgoing calls that never reached the assistant."""
+        fields = await vonage_params(request)
+        status = str(fields.get("status") or "")
+        logger.info("call {}: Vonage status {}", request.query_params.get("callId"), status)
+        if reason := vonage.UNREACHED.get(status):
+            patch = {"status": "ended", "endedReason": reason, "endedAt": now_iso()}
+            store.claim("calls", request.query_params.get("callId", ""), "queued", patch)
+        return Response(status_code=204)
 
     @app.post("/twilio/status", status_code=204)
     async def twilio_status(request: Request) -> Response:
@@ -1342,6 +1542,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         refuse: Callable[[str], Awaitable[None]],
         build: Callable[[], Any],
         transfer: Callable[[str], Awaitable[None]] | None = None,
+        sample_rate: int | None = None,
     ) -> None:
         """Run a claimed phone call with its assistant. `refuse(why)` hangs up when the call can't start."""
         from .bot import PHONE_SAMPLE_RATE, run_call
@@ -1364,13 +1565,14 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
             return
         if call.get("answeredBy"):  # a voicemail answered (see left_on_voicemail): leave the message and hang up
             plan.first_message, plan.leave_message = plan.assistant.get("voicemailMessage"), True
-        await run_call(build(), plan=plan, call_id=call_id, store=store, sample_rate=PHONE_SAMPLE_RATE,
+        await run_call(build(), plan=plan, call_id=call_id, store=store,
+                       sample_rate=sample_rate or PHONE_SAMPLE_RATE,
                        transfer=transfer)
 
     async def media_stream(websocket: WebSocket, provider: str) -> None:
         from pipecat.runner.utils import parse_telephony_websocket
 
-        from .bot import telnyx_transport, twilio_transport
+        from .bot import plivo_transport, telnyx_transport, twilio_transport
 
         await websocket.accept()
         try:
@@ -1394,7 +1596,22 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
             await websocket.close(code=1008)
             return
         transfer = None
-        call_sid = call.get("phoneCallProviderId") or call_data.get("call_id")
+        # Plivo's own id for the call is the one its stream starts with.
+        call_sid = (call_data.get("call_id") if provider == "plivo" else None) or call.get("phoneCallProviderId") \
+            or call_data.get("call_id")
+        if provider == "plivo" and settings.plivo_auth_id and settings.plivo_auth_token and call_sid:
+
+            async def transfer(number: str) -> None:
+                now = time.monotonic()
+                for stale in [k for k, (_, until) in plivo_transfers.items() if until < now]:
+                    plivo_transfers.pop(stale)
+                if len(plivo_transfers) >= MAX_PENDING_TRANSFERS:
+                    raise plivo.PlivoError("too many transfers waiting")
+                token = secrets.token_urlsafe(24)
+                plivo_transfers[token] = (_e164(number), now + TRANSFER_WAIT_SECONDS)
+                await plivo.transfer_call(settings.plivo_auth_id, settings.plivo_auth_token, call_sid,
+                                          f"{settings.public_url}/plivo/transfer/{token}")
+
         if provider == "twilio" and settings.twilio_account_sid and settings.twilio_auth_token and call_sid:
 
             async def transfer(number: str) -> None:
@@ -1404,7 +1621,7 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
         async def hang_up(_why: str) -> None:
             await websocket.close()
 
-        build = twilio_transport if provider == "twilio" else telnyx_transport
+        build = {"twilio": twilio_transport, "telnyx": telnyx_transport, "plivo": plivo_transport}[provider]
         await run_phone_call(call, hang_up, lambda: build(websocket, dict(call_data), settings), transfer)
 
     async def run_sip_call(call_id: str, session: sip.Session) -> None:
@@ -1445,6 +1662,57 @@ def create_app(settings: Settings | None = None, store: Store | None = None) -> 
     @app.websocket("/ws/telnyx")
     async def telnyx_media(websocket: WebSocket) -> None:
         await media_stream(websocket, "telnyx")
+
+    @app.websocket("/ws/plivo")
+    async def plivo_media(websocket: WebSocket) -> None:
+        await media_stream(websocket, "plivo")
+
+    @app.websocket("/ws/vonage")
+    async def vonage_media(websocket: WebSocket) -> None:
+        """A Vonage call: the websocket its NCCO connected. The call id rides in the URL; Vonage's first message says
+        the websocket is connected, and its audio is 16 kHz linear PCM."""
+        from .bot import WIDEBAND_SAMPLE_RATE, vonage_transport
+
+        await websocket.accept()
+        call_id = websocket.query_params.get("callId", "")
+        try:
+            first = json.loads(await asyncio.wait_for(websocket.receive_text(), HANDSHAKE_TIMEOUT))
+        except WebSocketDisconnect:
+            return
+        except (TimeoutError, ValueError, KeyError, RuntimeError):  # silence, bytes, or not JSON
+            await websocket.close(code=1008)
+            return
+        call = None
+        if isinstance(first, dict) and first.get("event") == "websocket:connected" and call_id:
+            call = store.claim("calls", call_id, "queued", {"status": "in-progress", "startedAt": now_iso()})
+        if call is None:
+            logger.warning("refused media stream for call {}: unknown or already connected", call_id or "?")
+            await websocket.close(code=1008)
+            return
+        uuid = call.get("phoneCallProviderId")
+        credentials = (settings.vonage_application_id, settings.vonage_private_key)
+        line = (store.get("phone_numbers", call.get("phoneNumberId") or "") or {}).get("number")
+        moved = False
+        transfer = None
+        if all(credentials) and uuid and line:
+
+            async def transfer(number: str) -> None:
+                nonlocal moved
+                await vonage.transfer_call(*credentials, uuid, number, line)
+                moved = True  # the call lives on with someone else: it must not be hung up
+
+        async def hang_up(_why: str) -> None:
+            await websocket.close()
+
+        try:
+            await run_phone_call(call, hang_up, lambda: vonage_transport(websocket), transfer,
+                                 sample_rate=WIDEBAND_SAMPLE_RATE)
+        finally:
+            if all(credentials) and uuid and not moved:  # closing the websocket may not end the call by itself
+                try:
+                    await vonage.hang_up(*credentials, uuid)
+                except (vonage.VonageError, httpx.HTTPError) as exc:  # the caller is usually gone already
+                    logger.debug("call {}: hanging up on Vonage: {}", call_id, exc)
 
     # ---- Genesys Cloud (Audio Connector, AudioHook protocol) ------------------------
     def genesys_refusal(websocket: WebSocket) -> str | None:

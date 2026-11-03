@@ -95,8 +95,8 @@ etapa por etapa, e aparece no painel.
 | Stack local grátis | ✅ Whisper, Ollama, Kokoro | ❌ | ❌ | ✅ Modelos abertos hospedados por você |
 | Ligações simultâneas | Sem limite próprio, seu servidor decide (**beta**) | 4, depois US$ 10 por linha ao mês | 20, depois US$ 8 por ligação ao mês | 10 por padrão no self-hosted, dá para aumentar; 10 na nuvem dele |
 | Modelo reserva | ✅ De qualquer provedor, quando um falha ou fica lento (**beta**) | Só do mesmo provedor, na OpenAI e no Bedrock | ✅ Assume quando o modelo principal falha ou fica lento | — |
-| Linhas telefônicas | Twilio (saída em **beta**); só entrada na Telnyx e no Genesys (**beta**); troncos SIP por UDP (**beta**) | ✅ Twilio, Vonage, Telnyx, SIP | ✅ Twilio, Telnyx, SIP | ✅ Twilio, Vonage, Telnyx, Plivo, Vobiz, Cloudonix, Asterisk |
-| Campanhas | Twilio e SIP (**beta**), sem nova tentativa por enquanto | ✅ | ✅ | ✅ Com nova tentativa |
+| Linhas telefônicas | Twilio (saída em **beta**); Telnyx, Plivo e Vonage (**beta**); só entrada no Genesys (**beta**); qualquer operadora por tronco SIP via UDP (**beta**) | ✅ Twilio, Vonage, Telnyx, SIP | ✅ Twilio, Telnyx, SIP | ✅ Twilio, Vonage, Telnyx, Plivo, Vobiz, Cloudonix, Asterisk |
+| Campanhas | Toda linha que faz ligações (**beta**), sem nova tentativa por enquanto | ✅ | ✅ | ✅ Com nova tentativa |
 | Base de conhecimento (RAG) | ✅ Grátis, no seu servidor, por palavras; ou a sua própria busca (**beta**) | ✅ Google Gemini, ou o seu servidor | ✅ | ✅ |
 | Vários assistentes numa ligação | ✅ Squads, no formato do Vapi (**beta**) | ✅ Squads | ✅ | ✅ |
 | Editor visual de fluxos | ❌ Fora dos planos por enquanto | Canvas para squads | ✅ | ✅ |
@@ -120,11 +120,11 @@ antes de decidir. O OpenRing não tem vínculo com nenhuma delas.
 | Quem liga em qualquer idioma: o assistente responde no idioma dele (`"language": "multi"`) | |
 | Vários assistentes numa ligação, passando a pessoa de um para o outro: squads e a ferramenta `handoff` (**beta**) | Handoff escolhido pelo seu servidor, e para um squad inteiro |
 | Base de conhecimento: arquivos que o assistente consulta durante a ligação, de graça e no seu servidor, ou a sua própria busca (**beta**) | Busca por significado, embutida |
-| Ligações recebidas pelo Twilio, confirmadas numa ligação real | Ligações de saída pela Telnyx e pelo Genesys; Plivo |
+| Ligações recebidas pelo Twilio, confirmadas numa ligação real | Ligações de saída pelo Genesys |
 | Troncos SIP: qualquer operadora, sem Twilio no meio, entrada e saída (**beta**) | SIP por TCP e TLS |
 | Ligações feitas pelo Twilio (**beta**: conte como foi) | |
 | Campanhas: um assistente liga para uma lista ou CSV, algumas ligações por vez, chamando cada pessoa pelo nome (**beta**) | |
-| Ligações recebidas pela Telnyx (**beta**) | |
+| Ligações de entrada e saída pela Telnyx, Plivo e Vonage (**beta**) | |
 | Ligações do Genesys Cloud pelo Audio Connector, dentro dos seus fluxos do Architect (**beta**) | |
 | APIs `/assistant`, `/phone-number`, `/call`, `/campaign` e `/tool` no formato do Vapi | |
 | Custo por ligação em dólares, por provedor, a preço de tabela (`cost` e `costBreakdown`) | Custo da linha telefônica |
@@ -133,7 +133,7 @@ antes de decidir. O OpenRing não tem vínculo com nenhuma delas.
 | Importação de assistentes, ferramentas e números de uma conta do Vapi | |
 | 16 modelos, 6 transcrições e 9 vozes, com os nomes do Vapi | |
 | Latência por turno, tempo até a primeira palavra, tokens e caracteres de voz por ligação, com farol | |
-| Crédito restante no OpenRouter, Deepgram, ElevenLabs, Twilio e Telnyx, na página Providers | |
+| Crédito restante no OpenRouter, Deepgram, ElevenLabs, Twilio, Telnyx e Plivo, na página Providers | |
 | Histórico com transcrição, tema claro e escuro | |
 
 ## 🔁 Migrar do Vapi
@@ -224,7 +224,9 @@ SIP REFER; se a outra linha não atender, a pessoa volta para o assistente.
 
 **A operadora precisa alcançar seu computador por UDP**, na porta 5060 e nas portas de áudio 40000-40999: precisa de
 servidor com endereço público ou redirecionamento de portas; túnel web não serve. Nada escuta até salvar um tronco, e o
-OpenRing só responde aos gateways dos seus troncos, para não virar alvo de fraude. Ainda não: SIP por TCP ou TLS, detecção
+OpenRing só responde aos gateways dos seus troncos, para não virar alvo de fraude. Com a sua operadora, o que muda é só o endereço do servidor SIP
+(`gateways[].ip`), o login do tronco e, se ela pedir, `sipRegisterPlan`; um PBX como Asterisk funciona igual, com o endereço
+dele como gateway. Ainda não: SIP por TCP ou TLS, detecção
 de caixa postal e outros codecs. Nenhuma operadora real passou por aqui ainda, então conte como foi.
 
 ### Provedor reserva (beta)
@@ -320,7 +322,17 @@ desligada: a pessoa ouve a saudação alguns segundos depois, e o Twilio cobra u
 **Telnyx (beta, ainda não confirmada numa ligação real):** no portal da Telnyx, crie uma **TeXML Application**
 com a voice URL `$PUBLIC_URL/telnyx/voice` (HTTP POST) e associe o número a ela. Cadastre o número no OpenRing
 com `"provider": "telnyx"` e defina `TELNYX_API_KEY` e `TELNYX_PUBLIC_KEY` (Keys & Credentials > Public Key),
-ou conecte a Telnyx pela página Providers. Ligações de saída e transferências continuam pelo Twilio.
+ou conecte a Telnyx pela página Providers. Para fazer ligações, informe a aplicação TeXML em `TELNYX_APPLICATION_ID` ou
+`texmlApplicationId` no número. Transferência e detecção de caixa postal ainda não existem na Telnyx.
+
+**Plivo (beta, ainda não confirmada numa ligação real):** no console da Plivo, crie uma **Application** com Answer URL
+`$PUBLIC_URL/plivo/voice` e Hangup URL `$PUBLIC_URL/plivo/status` (HTTP POST) e associe o número. Adicione o número com
+`"provider": "plivo"` e defina `PLIVO_AUTH_ID` e `PLIVO_AUTH_TOKEN`, ou conecte pela página Providers.
+
+**Vonage (beta, ainda não confirmada numa ligação real):** no painel da Vonage, crie uma **Voice application** com webhooks
+assinados, Answer URL `$PUBLIC_URL/vonage/voice` e Event URL `$PUBLIC_URL/vonage/event`, e associe o número. Adicione o
+número com `"provider": "vonage"` e defina `VONAGE_APPLICATION_ID`, `VONAGE_PRIVATE_KEY` (o caminho do arquivo que a Vonage
+deixa baixar) e `VONAGE_SIGNATURE_SECRET`, ou conecte pela página Providers.
 
 **Genesys Cloud (beta, ainda não confirmado numa ligação real):** o assistente atende dentro dos fluxos do
 Architect, pelo **Audio Connector** do Genesys. Na página Providers, conecte **Genesys Cloud** (o botão
